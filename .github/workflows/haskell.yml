@@ -39,7 +39,6 @@ jobs:
         stack install
         mkdir dist
         cp $HOME/.local/bin/s3up dist
-        cp -r static dist
 
     - name: Store Artifact
       uses: actions/upload-artifact@v1
