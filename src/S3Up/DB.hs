@@ -82,7 +82,7 @@ initTables db = do
 storeUpload :: (HasS3UpDB m, MonadIO m) => PartialUpload -> m PartialUpload
 storeUpload pu@PartialUpload{..} = liftIO . ins =<< s3UpDB
   where
-    ins db = do
+    ins db = withTransaction db $ do
       execute db "insert into uploads (chunk_size, bucket_name, filename, key, upid) values (?,?,?,?,?)" (
         _pu_chunkSize, _pu_bucket, _pu_filename, _pu_key, _pu_upid)
       pid <- fromIntegral <$> lastInsertRowId db
@@ -96,9 +96,15 @@ completedUploadPart i p e = liftIO . up =<< s3UpDB
 
 completedUpload :: (HasS3UpDB m, MonadIO m) => UploadID -> m ()
 completedUpload i = liftIO . up =<< s3UpDB
-  where up db = do
+  where up db = withTransaction db $ do
           execute db "delete from upload_parts where id = ?" (Only i)
           execute db "delete from uploads where id = ?" (Only i)
+
+abortedUpload :: (HasS3UpDB m, MonadIO m) => S3UploadID -> m ()
+abortedUpload i = liftIO . up =<< s3UpDB
+  where up db = withTransaction db $ do
+          execute db "delete from uploads where upid = ?" (Only i)
+          execute_ db "delete from upload_parts where id not in (select id from uploads)"
 
 -- Return in order of least work to do.
 listPartialUploads :: (HasS3UpDB m, MonadIO m) => m [PartialUpload]

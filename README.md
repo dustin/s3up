@@ -35,3 +35,13 @@ The `upload` command processes all outstanding uploads.
 Files are processed in order of which have the least work to do (i.e.,
 the ones that would finish soonest) and each individual file is
 processed concurrently as limited by the `-u` option.
+
+### list
+
+The `list` command lists in-progress multi-part upload operations for
+a single bucket from S3's perspective.
+
+### abort
+
+The `abort` command aborts a multi-part upload at S3 and from s3up's
+local concept of in-progress uploads.

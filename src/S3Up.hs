@@ -22,6 +22,9 @@ import           Control.Monad.Trans.AWS      (AWST', Credentials (..), envRegio
 import           Control.Monad.Trans.Resource (ResourceT)
 import qualified Data.ByteString.Lazy         as BL
 import           Data.List                    (sort)
+import           Data.Maybe                   (fromJust)
+import           Data.Text                    (Text)
+import           Data.Time.Clock              (UTCTime)
 import           Database.SQLite.Simple       (Connection, withConnection)
 import           GHC.Exts                     (IsList (..))
 import           Network.AWS.Data.Body        (RqBody (Hashed), ToHashedBody (..))
@@ -119,6 +122,22 @@ completeUpload PartialUpload{..} = do
       completedUploadPart _pu_id n etag
       logDbgL ["finished chunk ", tshow n, " ", tshow body, " as ", tshow etag]
       pure (n, etag)
+
+listMultiparts :: S3Up [(UTCTime, ObjectKey, Text)]
+listMultiparts = do
+  b <- asks (optBucket . s3Options)
+  r <- bucketRegion b
+  ups <- inAWS r $ send $ listMultipartUploads b
+  pure $ ups ^.. lmursUploads . folded . to (\u -> (fromJust (u ^? muInitiated . _Just),
+                                                    fromJust (u ^? muKey . _Just),
+                                                    u ^. muUploadId . _Just))
+
+abortUpload :: ObjectKey -> S3UploadID -> S3Up ()
+abortUpload k u = do
+  b <- asks (optBucket . s3Options)
+  r <- bucketRegion b
+  inAWS r $ void . send $ abortMultipartUpload b k u
+  abortedUpload u
 
 runIO :: Env -> S3Up a -> IO a
 runIO e m = runReaderT (runS3Up m) e

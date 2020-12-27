@@ -3,6 +3,7 @@ module Main where
 import           Control.Monad          (unless)
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Reader   (asks)
+import           Data.Foldable          (fold)
 import           Data.List              (intercalate)
 import           Data.Maybe             (fromMaybe, isNothing)
 import           Data.String            (fromString)
@@ -49,11 +50,28 @@ runUpload = do
                              -> mb $ _pu_chunkSize * (toInteger . length . filter (isNothing . snd) $ _pu_parts))
         mb = (`div` (1024*1024))
 
+runList :: S3Up ()
+runList = do
+  ps <- listMultiparts
+  mapM_ printRemote ps
+
+  where
+    printRemote (t,k,i) = liftIO . putStrLn $ fold ["- ", show t, " ", show k, " ID: ", show i]
+
+runAbort :: S3Up ()
+runAbort = do
+  argv <- asks (optArgv . s3Options)
+  unless (length argv == 2) $ fail "key and upload ID required"
+  let [keyS, upIDS] = argv
+  abortUpload (fromString keyS) (fromString upIDS)
+
 run :: String -> S3Up ()
 run c = fromMaybe (liftIO unknown) $ lookup c cmds
   where
     cmds = [("create", runCreate),
-            ("upload", runUpload)
+            ("upload", runUpload),
+            ("list", runList),
+            ("abort", runAbort)
            ]
     unknown = do
       putStrLn $ "Unknown command: " <> c
