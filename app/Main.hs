@@ -18,7 +18,7 @@ import           S3Up.DB
 import           S3Up.Logging
 
 atLeast :: (Read n, Show n, Ord n, Num n) => n -> ReadM n
-atLeast n = auto >>= \i -> if (i >= n) then pure i else readerError ("must be at least " <> (show n))
+atLeast n = auto >>= \i -> if i >= n then pure i else readerError ("must be at least " <> show n)
 
 options :: FilePath -> Parser Options
 options confdir = Options

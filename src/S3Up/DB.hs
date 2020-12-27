@@ -52,19 +52,19 @@ instance ToField ObjectKey where toField (ObjectKey k) = toField k
 instance FromField ObjectKey where
   fromField f = case fieldData f of
                   (SQLText t) -> Ok (ObjectKey t)
-                  _           -> returnError ConversionFailed f ("invalid type for ObjectKey")
+                  _           -> returnError ConversionFailed f "invalid type for ObjectKey"
 
 instance ToField BucketName where toField (BucketName k) = toField k
 instance FromField BucketName where
   fromField f = case fieldData f of
                   (SQLText t) -> Ok (BucketName t)
-                  _           -> returnError ConversionFailed f ("invalid type for BucketName")
+                  _           -> returnError ConversionFailed f "invalid type for BucketName"
 
 instance ToField ETag where toField (ETag k) = toField k
 instance FromField ETag where
   fromField f = case fieldData f of
                   (SQLBlob b) -> Ok (ETag b)
-                  _           -> returnError ConversionFailed f ("invalid type for ETag")
+                  _           -> returnError ConversionFailed f "invalid type for ETag"
 
 initQueries :: [(Int, Query)]
 initQueries = [

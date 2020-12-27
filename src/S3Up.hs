@@ -22,7 +22,6 @@ import           Control.Monad.Trans.AWS      (AWST', Credentials (..), envRegio
 import           Control.Monad.Trans.Resource (ResourceT)
 import qualified Data.ByteString.Lazy         as BL
 import           Data.List                    (sort)
-import           Data.Maybe                   (fromJust)
 import           Data.Text                    (Text)
 import           Data.Time.Clock              (UTCTime)
 import           Database.SQLite.Simple       (Connection, withConnection)
@@ -123,7 +122,7 @@ completeUpload PartialUpload{..} = do
         hSeek fh AbsoluteSeek ((fromIntegral n - 1) * _pu_chunkSize)
         Hashed . toHashed <$> BL.hGet fh (fromIntegral _pu_chunkSize)
       logDbgL ["uploading chunk ", tshow n, " ", tshow body]
-      Just etag <- view uprsETag <$> (inAWSRegion r $ send $ uploadPart _pu_bucket _pu_key n _pu_upid body)
+      Just etag <- view uprsETag <$> inAWSRegion r (send $ uploadPart _pu_bucket _pu_key n _pu_upid body)
       completedUploadPart _pu_id n etag
       logDbgL ["finished chunk ", tshow n, " ", tshow body, " as ", tshow etag]
       pure (n, etag)
@@ -132,8 +131,8 @@ listMultiparts :: S3Up [(UTCTime, ObjectKey, Text)]
 listMultiparts = do
   b <- asks (optBucket . s3Options)
   ups <- inAWSBucket b $ send $ listMultipartUploads b
-  pure $ ups ^.. lmursUploads . folded . to (\u -> (fromJust (u ^? muInitiated . _Just),
-                                                    fromJust (u ^? muKey . _Just),
+  pure $ ups ^.. lmursUploads . folded . to (\u -> (u ^?! muInitiated . _Just,
+                                                    u ^?! muKey . _Just,
                                                     u ^. muUploadId . _Just))
 
 abortUpload :: ObjectKey -> S3UploadID -> S3Up ()
