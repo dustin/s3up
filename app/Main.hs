@@ -4,7 +4,7 @@ import           Control.Monad          (unless)
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Reader   (asks)
 import           Data.List              (intercalate)
-import           Data.Maybe             (fromMaybe)
+import           Data.Maybe             (fromMaybe, isNothing)
 import           Data.String            (fromString)
 import           Options.Applicative    (Parser, ReadM, argument, auto, execParser, fullDesc, help, helper, info, long,
                                          metavar, option, progDesc, readerError, short, showDefault, some, str,
@@ -40,7 +40,14 @@ runCreate = do
             tshow (length _pu_parts), " parts as ", _pu_upid]
 
 runUpload :: S3Up ()
-runUpload = mapM_ completeUpload =<< listPartialUploads
+runUpload = do
+  todo <- listPartialUploads
+  unless (null todo) $ logInfoL [tshow (length todo), " files to upload for a total of about ",
+                                 tshow (todoMB todo), " MB"]
+  mapM_ completeUpload todo
+  where todoMB = sum . fmap (\PartialUpload{..}
+                             -> mb $ _pu_chunkSize * (toInteger . length . filter (isNothing . snd) $ _pu_parts))
+        mb = (`div` (1024*1024))
 
 run :: String -> S3Up ()
 run c = fromMaybe (liftIO unknown) $ lookup c cmds

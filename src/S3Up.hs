@@ -116,8 +116,8 @@ completeUpload PartialUpload{..} = do
       logDbgL ["uploading chunk ", tshow n, " ", tshow body]
       res <- inAWS r $ send $ uploadPart _pu_bucket _pu_key n _pu_upid body
       let Just etag = res ^. uprsETag
-      logDbgL ["uploaded chunk ", tshow n, " ", tshow body, " as ", tshow etag]
       completedUploadPart _pu_id n etag
+      logDbgL ["finished chunk ", tshow n, " ", tshow body, " as ", tshow etag]
       pure (n, etag)
 
 runIO :: Env -> S3Up a -> IO a
