@@ -1,8 +1,10 @@
 module Logging where
 
 import           Control.Monad         (when)
-import           Control.Monad.Logger  (Loc (..), LogLevel (..), LogSource, LogStr, fromLogStr)
+import           Control.Monad.Logger  (Loc (..), LogLevel (..), LogSource, LogStr, MonadLogger (..), ToLogStr (..),
+                                        fromLogStr, logDebugN, logErrorN, logInfoN, monadLoggerLog)
 import qualified Data.ByteString.Char8 as C8
+import           Data.Foldable         (fold)
 import           Data.String           (fromString)
 import qualified Data.Text             as T
 import           System.IO             (stderr)
@@ -17,3 +19,24 @@ baseLogger minLvl _ _ lvl s = when (lvl >= minLvl) $ C8.hPutStrLn stderr (fromLo
                LevelWarn    -> "W"
                LevelError   -> "E"
                LevelOther x -> fromString . T.unpack $ x
+
+logError :: MonadLogger m => T.Text -> m ()
+logError = logErrorN
+
+logErrorL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
+logErrorL = logErrorN . fold
+
+logInfo :: MonadLogger m => T.Text -> m ()
+logInfo = logInfoN
+
+logInfoL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
+logInfoL = logInfoN . fold
+
+logDbg :: MonadLogger m => T.Text -> m ()
+logDbg = logDebugN
+
+logDbgL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
+logDbgL = logInfoN . fold
+
+tshow :: Show a => a -> T.Text
+tshow = T.pack . show

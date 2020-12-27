@@ -11,6 +11,7 @@ import           Options.Applicative    (Parser, argument, auto, execParser, ful
                                          metavar, option, progDesc, short, showDefault, some, str, strOption, switch,
                                          value, (<**>))
 
+import           Logging
 import           S3Up
 
 options :: Parser Options

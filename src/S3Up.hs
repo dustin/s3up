@@ -16,14 +16,12 @@ import           Control.Monad.Catch          (MonadCatch (..), MonadMask (..), 
                                                bracket_, catch)
 import           Control.Monad.IO.Class       (MonadIO (..))
 import           Control.Monad.Logger         (Loc (..), LogLevel (..), LogSource, LogStr, MonadLogger (..),
-                                               ToLogStr (..), logDebugN, logErrorN, logInfoN, monadLoggerLog)
+                                               ToLogStr (..), monadLoggerLog)
 import           Control.Monad.Reader         (MonadReader, ReaderT (..), asks)
 import           Control.Monad.Trans.AWS      (AWST', Credentials (..), envRegion, newEnv, runAWST, runResourceT, send)
 import           Control.Monad.Trans.Resource (ResourceT)
 import qualified Data.ByteString.Lazy         as BL
-import           Data.Foldable                (fold)
 import           Data.List                    (sort)
-import qualified Data.Text                    as T
 import           Database.SQLite.Simple       (Connection, withConnection)
 import           GHC.Exts                     (IsList (..))
 import           Network.AWS.Data.Body        (RqBody (Hashed), ToHashedBody (..))
@@ -77,27 +75,6 @@ mapConcurrentlyLimited :: (MonadMask m, MonadUnliftIO m, Traversable f)
                        -> m (f b)
 mapConcurrentlyLimited n f l = liftIO (newQSem n) >>= \q -> mapConcurrently (b q) l
   where b q x = bracket_ (liftIO (waitQSem q)) (liftIO (signalQSem q)) (f x)
-
-logError :: MonadLogger m => T.Text -> m ()
-logError = logErrorN
-
-logErrorL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
-logErrorL = logErrorN . fold
-
-logInfo :: MonadLogger m => T.Text -> m ()
-logInfo = logInfoN
-
-logInfoL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
-logInfoL = logInfoN . fold
-
-logDbg :: MonadLogger m => T.Text -> m ()
-logDbg = logDebugN
-
-logDbgL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
-logDbgL = logInfoN . fold
-
-tshow :: Show a => a -> T.Text
-tshow = T.pack . show
 
 inAWS :: (MonadCatch m, MonadUnliftIO m) => Region -> AWST' AWSE.Env (ResourceT m) a -> m a
 inAWS r a = (newEnv Discover <&> set envRegion r) >>= \awsenv -> (runResourceT . runAWST awsenv) a
