@@ -36,7 +36,7 @@ logDbg :: MonadLogger m => T.Text -> m ()
 logDbg = logDebugN
 
 logDbgL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
-logDbgL = logInfoN . fold
+logDbgL = logDebugN . fold
 
 tshow :: Show a => a -> T.Text
 tshow = T.pack . show
