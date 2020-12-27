@@ -8,7 +8,7 @@ import           Control.Monad.Reader             (ReaderT (..), ask, runReaderT
 import           Data.Coerce                      (coerce)
 import           Data.List                        (sortOn)
 import qualified Data.Map.Strict                  as Map
-import           Data.Maybe                       (catMaybes)
+import           Data.Maybe                       (isNothing)
 import           Data.String                      (fromString)
 import           Data.Text                        (Text)
 import           Database.SQLite.Simple           hiding (bind, close)
@@ -106,7 +106,7 @@ listPartialUploads = liftIO . sel =<< s3UpDB
   where
     sel db = do
       segs <- Map.fromListWith (<>) . fmap (\(i,p,e) -> (i, [(p,e)])) <$> query_ db "select id, part, etag from upload_parts"
-      sortOn (length . catMaybes . fmap snd . _pu_parts) .
+      sortOn (length . filter (isNothing . snd) . _pu_parts) .
         map (\p@PartialUpload{..} -> p{_pu_parts=Map.findWithDefault [] _pu_id segs})
         <$> query_ db "select id, chunk_size, bucket_name, filename, key, upid from uploads"
 
