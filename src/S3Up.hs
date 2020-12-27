@@ -82,20 +82,21 @@ mapConcurrentlyLimited n f l = liftIO (newQSem n) >>= \q -> mapConcurrently (b q
 inAWS :: (MonadCatch m, MonadUnliftIO m) => Region -> AWST' AWSE.Env (ResourceT m) a -> m a
 inAWS r a = (newEnv Discover <&> set envRegion r) >>= \awsenv -> (runResourceT . runAWST awsenv) a
 
+inAWSBucket :: (MonadCatch m, MonadUnliftIO m) => BucketName -> AWST' AWSE.Env (ResourceT m) a -> m a
+inAWSBucket b a = bucketRegion b >>= \r -> inAWS r a
+
 -- Get the correct region for the given bucket
-bucketRegion :: BucketName -> S3Up Region
+bucketRegion :: (MonadCatch m, MonadUnliftIO m) => BucketName -> m Region
 bucketRegion b = do
-  r <- asks s3Region
-  br <- inAWS r $ send $ getBucketLocation b
+  br <- newEnv Discover >>= \e -> (runResourceT . runAWST e) . send $ getBucketLocation b
   pure (br ^. gblbrsLocationConstraint . _LocationConstraint)
 
 createMultipart :: FilePath -> ObjectKey -> S3Up PartialUpload
 createMultipart fp key = do
   fsize <- toInteger . fileSize <$> (liftIO . getFileStatus) fp
   b <- asks (optBucket . s3Options)
-  r <- bucketRegion b
   chunkSize <- asks (optChunkSize . s3Options)
-  up <- inAWS r $ send $ createMultipartUpload b key
+  up <- inAWSBucket b $ send $ createMultipartUpload b key
   let chunks = [1 .. ceiling @Double (fromIntegral fsize / fromIntegral chunkSize)]
   storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. cmursUploadId . _Just) ((,Nothing) <$> chunks)
 
@@ -126,8 +127,7 @@ completeUpload PartialUpload{..} = do
 listMultiparts :: S3Up [(UTCTime, ObjectKey, Text)]
 listMultiparts = do
   b <- asks (optBucket . s3Options)
-  r <- bucketRegion b
-  ups <- inAWS r $ send $ listMultipartUploads b
+  ups <- inAWSBucket b $ send $ listMultipartUploads b
   pure $ ups ^.. lmursUploads . folded . to (\u -> (fromJust (u ^? muInitiated . _Just),
                                                     fromJust (u ^? muKey . _Just),
                                                     u ^. muUploadId . _Just))
@@ -135,8 +135,7 @@ listMultiparts = do
 abortUpload :: ObjectKey -> S3UploadID -> S3Up ()
 abortUpload k u = do
   b <- asks (optBucket . s3Options)
-  r <- bucketRegion b
-  inAWS r $ void . send $ abortMultipartUpload b k u
+  inAWSBucket b $ void . send $ abortMultipartUpload b k u
   abortedUpload u
 
 runIO :: Env -> S3Up a -> IO a
