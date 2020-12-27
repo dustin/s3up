@@ -79,17 +79,22 @@ mapConcurrentlyLimited :: (MonadMask m, MonadUnliftIO m, Traversable f)
 mapConcurrentlyLimited n f l = liftIO (newQSem n) >>= \q -> mapConcurrently (b q) l
   where b q x = bracket_ (liftIO (waitQSem q)) (liftIO (signalQSem q)) (f x)
 
-inAWS :: (MonadCatch m, MonadUnliftIO m) => Region -> AWST' AWSE.Env (ResourceT m) a -> m a
-inAWS r a = (newEnv Discover <&> set envRegion r) >>= \awsenv -> (runResourceT . runAWST awsenv) a
+-- Run an action in any AWS location
+inAWS :: (MonadCatch m, MonadUnliftIO m) => AWST' AWSE.Env (ResourceT m) a -> m a
+inAWS a = newEnv Discover >>= \e -> (runResourceT . runAWST e) a
 
+-- Run an action in the specified region
+inAWSRegion :: (MonadCatch m, MonadUnliftIO m) => Region -> AWST' AWSE.Env (ResourceT m) a -> m a
+inAWSRegion r a = (newEnv Discover <&> set envRegion r) >>= \awsenv -> (runResourceT . runAWST awsenv) a
+
+-- Run an action at the region appropriate for the given bucket
 inAWSBucket :: (MonadCatch m, MonadUnliftIO m) => BucketName -> AWST' AWSE.Env (ResourceT m) a -> m a
-inAWSBucket b a = bucketRegion b >>= \r -> inAWS r a
+inAWSBucket b a = bucketRegion b >>= \r -> inAWSRegion r a
 
 -- Get the correct region for the given bucket
 bucketRegion :: (MonadCatch m, MonadUnliftIO m) => BucketName -> m Region
-bucketRegion b = do
-  br <- newEnv Discover >>= \e -> (runResourceT . runAWST e) . send $ getBucketLocation b
-  pure (br ^. gblbrsLocationConstraint . _LocationConstraint)
+bucketRegion b = view (gblbrsLocationConstraint . _LocationConstraint)
+                 <$> (inAWS . send $ getBucketLocation b)
 
 createMultipart :: FilePath -> ObjectKey -> S3Up PartialUpload
 createMultipart fp key = do
@@ -108,7 +113,7 @@ completeUpload PartialUpload{..} = do
   finished <- fromList . sort <$> mapConcurrentlyLimited c (uc r) _pu_parts
   logInfoL ["Completed all parts of ", tshow _pu_filename, " to ", tshow _pu_bucket, ":", tshow _pu_key]
   let completed = completedMultipartUpload & cmuParts ?~ (uncurry completedPart <$> finished)
-  inAWS r $ void . send $ completeMultipartUpload _pu_bucket _pu_key _pu_upid & cMultipartUpload ?~ completed
+  inAWSRegion r $ void . send $ completeMultipartUpload _pu_bucket _pu_key _pu_upid & cMultipartUpload ?~ completed
   completedUpload _pu_id
 
   where
@@ -118,8 +123,7 @@ completeUpload PartialUpload{..} = do
         hSeek fh AbsoluteSeek ((fromIntegral n - 1) * _pu_chunkSize)
         Hashed . toHashed <$> BL.hGet fh (fromIntegral _pu_chunkSize)
       logDbgL ["uploading chunk ", tshow n, " ", tshow body]
-      res <- inAWS r $ send $ uploadPart _pu_bucket _pu_key n _pu_upid body
-      let Just etag = res ^. uprsETag
+      Just etag <- view uprsETag <$> (inAWSRegion r $ send $ uploadPart _pu_bucket _pu_key n _pu_upid body)
       completedUploadPart _pu_id n etag
       logDbgL ["finished chunk ", tshow n, " ", tshow body, " as ", tshow etag]
       pure (n, etag)
