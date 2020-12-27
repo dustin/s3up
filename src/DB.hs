@@ -1,0 +1,117 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+module DB where
+
+import           Control.Monad.IO.Class           (MonadIO (..))
+import           Control.Monad.Reader             (ReaderT (..), ask, runReaderT)
+import           Data.Coerce                      (coerce)
+import           Data.List                        (sortOn)
+import qualified Data.Map.Strict                  as Map
+import           Data.Maybe                       (catMaybes)
+import           Data.String                      (fromString)
+import           Data.Text                        (Text)
+import           Database.SQLite.Simple           hiding (bind, close)
+import           Database.SQLite.Simple.FromField
+import           Database.SQLite.Simple.Ok
+import           Database.SQLite.Simple.ToField
+import           Network.AWS.S3.Types             (BucketName (..), ETag (..), ObjectKey (..))
+
+class Monad m => HasS3UpDB m where
+  s3UpDB :: m Connection
+
+instance {-# OVERLAPPING #-} Monad m => HasS3UpDB (ReaderT Connection m) where s3UpDB = ask
+
+withDB :: Connection -> ReaderT Connection m a -> m a
+withDB = flip runReaderT
+
+type UploadID = Int
+type S3UploadID = Text
+
+data PartialUpload = PartialUpload
+  { _pu_id        :: UploadID
+  , _pu_chunkSize :: Integer
+  , _pu_bucket    :: BucketName
+  , _pu_filename  :: FilePath
+  , _pu_key       :: ObjectKey
+  , _pu_upid      :: S3UploadID
+  , _pu_parts     :: [(Int, Maybe ETag)]
+  } deriving Show
+
+instance FromRow PartialUpload where
+  fromRow =
+    PartialUpload <$> field -- id
+    <*> field -- chunkSize
+    <*> field -- bucket
+    <*> field -- filename
+    <*> field -- key
+    <*> field -- upid
+    <*> pure []
+
+instance ToField ObjectKey where toField (ObjectKey k) = toField k
+instance FromField ObjectKey where
+  fromField f = case fieldData f of
+                  (SQLText t) -> Ok (ObjectKey t)
+                  _           -> returnError ConversionFailed f ("invalid type for ObjectKey")
+
+instance ToField BucketName where toField (BucketName k) = toField k
+instance FromField BucketName where
+  fromField f = case fieldData f of
+                  (SQLText t) -> Ok (BucketName t)
+                  _           -> returnError ConversionFailed f ("invalid type for BucketName")
+
+instance ToField ETag where toField (ETag k) = toField k
+instance FromField ETag where
+  fromField f = case fieldData f of
+                  (SQLBlob b) -> Ok (ETag b)
+                  _           -> returnError ConversionFailed f ("invalid type for ETag")
+
+initQueries :: [(Int, Query)]
+initQueries = [
+  (1, "create table if not exists uploads (id integer primary key autoincrement, chunk_size, bucket_name, filename, key, upid)"),
+  (1, "create table if not exists upload_parts (id integer, part integer, etag)")
+  ]
+
+initTables :: Connection -> IO ()
+initTables db = do
+  [Only uv] <- query_ db "pragma user_version"
+  mapM_ (execute_ db) [q | (v,q) <- initQueries, v > uv]
+  -- binding doesn't work on this for some reason.  It's safe, at least.
+  execute_ db $ "pragma user_version = " <> (fromString . show . maximum . fmap fst $ initQueries)
+
+storeUpload :: (HasS3UpDB m, MonadIO m) => PartialUpload -> m PartialUpload
+storeUpload pu@PartialUpload{..} = liftIO . ins =<< s3UpDB
+  where
+    ins db = do
+      execute db "insert into uploads (chunk_size, bucket_name, filename, key, upid) values (?,?,?,?,?)" (
+        _pu_chunkSize, _pu_bucket, _pu_filename, _pu_key, _pu_upid)
+      pid <- fromIntegral <$> lastInsertRowId db
+      let vals = [(pid, fst i) | i <- _pu_parts]
+      executeMany db "insert into upload_parts (id, part) values (?,?)" vals
+      pure pu{_pu_id=pid}
+
+completedUploadPart :: (HasS3UpDB m, MonadIO m) => UploadID -> Int -> ETag -> m ()
+completedUploadPart i p e = liftIO . up =<< s3UpDB
+  where up db = execute db "update upload_parts set etag = ? where id = ? and part = ?" (e, i, p)
+
+completedUpload :: (HasS3UpDB m, MonadIO m) => UploadID -> m ()
+completedUpload i = liftIO . up =<< s3UpDB
+  where up db = do
+          execute db "delete from upload_parts where id = ?" (Only i)
+          execute db "delete from uploads where id = ?" (Only i)
+
+-- Return in order of least work to do.
+listPartialUploads :: (HasS3UpDB m, MonadIO m) => m [PartialUpload]
+listPartialUploads = liftIO . sel =<< s3UpDB
+  where
+    sel db = do
+      segs <- Map.fromListWith (<>) . fmap (\(i,p,e) -> (i, [(p,e)])) <$> query_ db "select id, part, etag from upload_parts"
+      sortOn (length . catMaybes . fmap snd . _pu_parts) .
+        map (\p@PartialUpload{..} -> p{_pu_parts=Map.findWithDefault [] _pu_id segs})
+        <$> query_ db "select id, chunk_size, bucket_name, filename, key, upid from uploads"
+
+listQueuedFiles :: (HasS3UpDB m, MonadIO m) => m [FilePath]
+listQueuedFiles = liftIO . coerce . sel =<< s3UpDB
+  where
+    sel :: Connection -> IO [Only FilePath]
+    sel db = query_ db "select filename from uploads"

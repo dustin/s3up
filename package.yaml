@@ -1,0 +1,81 @@
+name:                s3up
+version:             0.1.0.0
+github:              "dustin/s3up"
+license:             BSD3
+author:              "Dustin Sallings"
+maintainer:          "dustin@spy.net"
+copyright:           "MIT"
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/dustin/s3up#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- amazonka-s3 >= 1.6.1
+- lens
+- optparse-applicative
+- conduit
+- conduit-extra
+- sqlite-simple
+- monad-logger
+- mtl
+- transformers
+- async
+- unliftio
+- amazonka
+- amazonka-core
+- stm
+- text
+- containers
+- extra
+- bytestring
+- exceptions
+- unix
+- resourcet
+
+library:
+  source-dirs: src
+  ghc-options:
+    - -Wall
+
+default-extensions:
+  - OverloadedStrings
+  - RecordWildCards
+  - NamedFieldPuns
+
+executables:
+  s3up:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+      - -Wall
+    dependencies:
+    - s3up
+
+tests:
+  s3up-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - s3up
+    - HUnit
+    - tasty
+    - tasty-hunit
+    - tasty-quickcheck
