@@ -42,6 +42,8 @@ dependencies:
 - exceptions
 - unix
 - resourcet
+- directory
+- filepath
 
 library:
   source-dirs: src

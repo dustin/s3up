@@ -9,6 +9,8 @@ import           Data.String            (fromString)
 import           Options.Applicative    (Parser, ReadM, argument, auto, execParser, fullDesc, help, helper, info, long,
                                          metavar, option, progDesc, readerError, short, showDefault, some, str,
                                          strOption, switch, value, (<**>))
+import           System.Directory       (createDirectoryIfMissing, getHomeDirectory)
+import           System.FilePath.Posix  ((</>))
 
 import           S3Up
 import           S3Up.DB
@@ -17,9 +19,9 @@ import           S3Up.Logging
 atLeast :: (Read n, Show n, Ord n, Num n) => n -> ReadM n
 atLeast n = auto >>= \i -> if (i >= n) then pure i else readerError ("must be at least " <> (show n))
 
-options :: Parser Options
-options = Options
-  <$> strOption (long "dbpath" <> showDefault <> value "s3up.db" <> help "db path")
+options :: FilePath -> Parser Options
+options confdir = Options
+  <$> strOption (long "dbpath" <> showDefault <> value (confdir </> "s3up.db") <> help "db path")
   <*> strOption (long "bucket" <> showDefault <> value "junk.west.spy.net" <> help "s3 bucket")
   <*> option (atLeast (5*1024*1024)) (short 's' <> long "chunk-size" <> showDefault
                                       <> value (6 * 1024 * 1024) <> help "upload chunk size")
@@ -53,9 +55,11 @@ run c = fromMaybe (liftIO unknown) $ lookup c cmds
 
 main :: IO ()
 main = do
-  o@Options{..} <- execParser opts
+  confdir <- (</> ".config/s3up") <$> getHomeDirectory
+  createDirectoryIfMissing True confdir
+  o@Options{..} <- execParser (opts confdir)
   runWithOptions o (run (head optArgv))
 
   where
-    opts = info (options <**> helper)
-           ( fullDesc <> progDesc "S3 Upload utility.")
+    opts confdir = info (options confdir <**> helper)
+                ( fullDesc <> progDesc "S3 Upload utility.")
