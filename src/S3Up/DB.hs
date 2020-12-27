@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module DB where
+module S3Up.DB where
 
 import           Control.Monad.IO.Class           (MonadIO (..))
 import           Control.Monad.Reader             (ReaderT (..), ask, runReaderT)

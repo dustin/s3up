@@ -3,7 +3,6 @@ module Main where
 import           Control.Monad          (unless)
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Reader   (asks)
-import           DB
 import           Data.List              (intercalate)
 import           Data.Maybe             (fromMaybe)
 import           Data.String            (fromString)
@@ -11,8 +10,9 @@ import           Options.Applicative    (Parser, argument, auto, execParser, ful
                                          metavar, option, progDesc, short, showDefault, some, str, strOption, switch,
                                          value, (<**>))
 
-import           Logging
 import           S3Up
+import           S3Up.DB
+import           S3Up.Logging
 
 options :: Parser Options
 options = Options

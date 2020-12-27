@@ -31,8 +31,8 @@ import           System.IO                    (IOMode (..), SeekMode (..), hSeek
 import           System.Posix.Files           (fileSize, getFileStatus)
 import           UnliftIO                     (MonadUnliftIO (..), mapConcurrently)
 
-import           DB
-import           Logging
+import           S3Up.DB
+import           S3Up.Logging
 
 data Options = Options {
   optDBPath      :: FilePath,

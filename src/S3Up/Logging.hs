@@ -1,8 +1,8 @@
-module Logging where
+module S3Up.Logging where
 
 import           Control.Monad         (when)
-import           Control.Monad.Logger  (Loc (..), LogLevel (..), LogSource, LogStr, MonadLogger (..), ToLogStr (..),
-                                        fromLogStr, logDebugN, logErrorN, logInfoN, monadLoggerLog)
+import           Control.Monad.Logger  (Loc (..), LogLevel (..), LogSource, LogStr, MonadLogger (..), fromLogStr,
+                                        logDebugN, logErrorN, logInfoN)
 import qualified Data.ByteString.Char8 as C8
 import           Data.Foldable         (fold)
 import           Data.String           (fromString)
