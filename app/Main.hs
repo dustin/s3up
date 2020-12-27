@@ -6,21 +6,26 @@ import           Control.Monad.Reader   (asks)
 import           Data.List              (intercalate)
 import           Data.Maybe             (fromMaybe)
 import           Data.String            (fromString)
-import           Options.Applicative    (Parser, argument, auto, execParser, fullDesc, help, helper, info, long,
-                                         metavar, option, progDesc, short, showDefault, some, str, strOption, switch,
-                                         value, (<**>))
+import           Options.Applicative    (Parser, ReadM, argument, auto, execParser, fullDesc, help, helper, info, long,
+                                         metavar, option, progDesc, readerError, short, showDefault, some, str,
+                                         strOption, switch, value, (<**>))
 
 import           S3Up
 import           S3Up.DB
 import           S3Up.Logging
 
+atLeast :: (Read n, Show n, Ord n, Num n) => n -> ReadM n
+atLeast n = auto >>= \i -> if (i >= n) then pure i else readerError ("must be at least " <> (show n))
+
 options :: Parser Options
 options = Options
   <$> strOption (long "dbpath" <> showDefault <> value "s3up.db" <> help "db path")
   <*> strOption (long "bucket" <> showDefault <> value "junk.west.spy.net" <> help "s3 bucket")
-  <*> option auto (short 's' <> long "chunk-size" <> showDefault <> value (6 * 1024 * 1024) <> help "upload chunk size")
+  <*> option (atLeast (5*1024*1024)) (short 's' <> long "chunk-size" <> showDefault
+                                      <> value (6 * 1024 * 1024) <> help "upload chunk size")
   <*> switch (short 'v' <> long "verbose" <> help "enable debug logging")
-  <*> option auto (short 'u' <> long "upload-concurrency" <> showDefault <> value 3 <> help "Upload concurrency")
+  <*> option (atLeast 1) (short 'u' <> long "upload-concurrency" <> showDefault
+                          <> value 3 <> help "Upload concurrency")
   <*> some (argument str (metavar "cmd args..."))
 
 runCreate :: S3Up ()
