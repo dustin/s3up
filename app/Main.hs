@@ -14,8 +14,9 @@ import           System.Directory       (createDirectoryIfMissing, getHomeDirect
 import           System.FilePath.Posix  ((</>))
 
 import           S3Up
-import           S3Up.DB
+import qualified S3Up.DB                as DB
 import           S3Up.Logging
+import           S3Up.Types
 
 atLeast :: (Read n, Show n, Ord n, Num n) => n -> ReadM n
 atLeast n = auto >>= \i -> if i >= n then pure i else readerError ("must be at least " <> show n)
@@ -43,7 +44,7 @@ runCreate = do
 
 runUpload :: S3Up ()
 runUpload = do
-  todo <- listPartialUploads
+  todo <- DB.listPartialUploads
   unless (null todo) $ logInfoL [tshow (length todo), " files to upload for a total of about ",
                                  tshow (todoMB todo), " MB"]
   mapM_ completeUpload todo

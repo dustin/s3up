@@ -11,7 +11,6 @@ import           Data.List                        (sortOn)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                       (isNothing)
 import           Data.String                      (fromString)
-import           Data.Text                        (Text)
 import           Data.Typeable                    (Typeable)
 import           Database.SQLite.Simple           hiding (bind, close)
 import           Database.SQLite.Simple.FromField
@@ -20,6 +19,8 @@ import           Database.SQLite.Simple.ToField
 import           Network.AWS.Data                 (FromText, ToByteString (..), ToText (..), fromText)
 import           Network.AWS.S3.Types             (BucketName (..), ETag (..), ObjectKey (..))
 
+import           S3Up.Types
+
 class Monad m => HasS3UpDB m where
   s3UpDB :: m Connection
 
@@ -27,19 +28,6 @@ instance {-# OVERLAPPING #-} Monad m => HasS3UpDB (ReaderT Connection m) where s
 
 withDB :: Connection -> ReaderT Connection m a -> m a
 withDB = flip runReaderT
-
-type UploadID = Int
-type S3UploadID = Text
-
-data PartialUpload = PartialUpload
-  { _pu_id        :: UploadID
-  , _pu_chunkSize :: Integer
-  , _pu_bucket    :: BucketName
-  , _pu_filename  :: FilePath
-  , _pu_key       :: ObjectKey
-  , _pu_upid      :: S3UploadID
-  , _pu_parts     :: [(Int, Maybe ETag)]
-  } deriving Show
 
 instance FromRow PartialUpload where
   fromRow =

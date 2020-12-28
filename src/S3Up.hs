@@ -33,8 +33,9 @@ import           System.IO                    (IOMode (..), SeekMode (..), hSeek
 import           System.Posix.Files           (fileSize, getFileStatus)
 import           UnliftIO                     (MonadUnliftIO (..), mapConcurrently)
 
-import           S3Up.DB
+import qualified S3Up.DB                      as DB
 import           S3Up.Logging
+import           S3Up.Types
 
 data Options = Options {
   optDBPath      :: FilePath,
@@ -57,7 +58,7 @@ newtype S3Up a = S3Up
   } deriving (Applicative, Functor, Monad, MonadIO, MonadUnliftIO,
               MonadCatch, MonadThrow, MonadMask, MonadReader Env, MonadFail)
 
-instance (Monad m, MonadReader Env m) => HasS3UpDB m where
+instance (Monad m, MonadReader Env m) => DB.HasS3UpDB m where
   s3UpDB = asks dbConn
 
 instance MonadLogger S3Up where
@@ -102,7 +103,7 @@ createMultipart fp key = do
   chunkSize <- asks (optChunkSize . s3Options)
   up <- inAWSBucket b $ send $ createMultipartUpload b key
   let chunks = [1 .. ceiling @Double (fromIntegral fsize / fromIntegral chunkSize)]
-  storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. cmursUploadId . _Just) ((,Nothing) <$> chunks)
+  DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. cmursUploadId . _Just) ((,Nothing) <$> chunks)
 
 completeUpload :: PartialUpload -> S3Up ()
 completeUpload PartialUpload{..} = do
@@ -113,7 +114,7 @@ completeUpload PartialUpload{..} = do
   logInfoL ["Completed all parts of ", tshow _pu_filename, " to ", tshow _pu_bucket, ":", tshow _pu_key]
   let completed = completedMultipartUpload & cmuParts ?~ (uncurry completedPart <$> finished)
   inAWSRegion r $ void . send $ completeMultipartUpload _pu_bucket _pu_key _pu_upid & cMultipartUpload ?~ completed
-  completedUpload _pu_id
+  DB.completedUpload _pu_id
 
   where
     uc _ (n,Just e) = pure (n,e)
@@ -123,7 +124,7 @@ completeUpload PartialUpload{..} = do
         Hashed . toHashed <$> BL.hGet fh (fromIntegral _pu_chunkSize)
       logDbgL ["uploading chunk ", tshow n, " ", tshow body]
       Just etag <- view uprsETag <$> inAWSRegion r (send $ uploadPart _pu_bucket _pu_key n _pu_upid body)
-      completedUploadPart _pu_id n etag
+      DB.completedUploadPart _pu_id n etag
       logDbgL ["finished chunk ", tshow n, " ", tshow body, " as ", tshow etag]
       pure (n, etag)
 
@@ -139,14 +140,14 @@ abortUpload :: ObjectKey -> S3UploadID -> S3Up ()
 abortUpload k u = do
   b <- asks (optBucket . s3Options)
   inAWSBucket b $ void . send $ abortMultipartUpload b k u
-  abortedUpload u
+  DB.abortedUpload u
 
 runIO :: Env -> S3Up a -> IO a
 runIO e m = runReaderT (runS3Up m) e
 
 runWithOptions :: Options -> S3Up a -> IO a
 runWithOptions o@Options{..} a = withConnection optDBPath $ \db -> do
-  initTables db
+  DB.initTables db
   let o' = o{optArgv = tail optArgv}
       minLvl = if optVerbose then LevelDebug else LevelInfo
   liftIO $ runIO (Env o' NorthVirginia db (baseLogger minLvl)) a
