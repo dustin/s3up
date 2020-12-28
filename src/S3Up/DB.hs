@@ -5,16 +5,19 @@ module S3Up.DB where
 
 import           Control.Monad.IO.Class           (MonadIO (..))
 import           Control.Monad.Reader             (ReaderT (..), ask, runReaderT)
+import qualified Data.ByteString                  as BS
 import           Data.Coerce                      (coerce)
 import           Data.List                        (sortOn)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                       (isNothing)
 import           Data.String                      (fromString)
 import           Data.Text                        (Text)
+import           Data.Typeable                    (Typeable)
 import           Database.SQLite.Simple           hiding (bind, close)
 import           Database.SQLite.Simple.FromField
 import           Database.SQLite.Simple.Ok
 import           Database.SQLite.Simple.ToField
+import           Network.AWS.Data                 (FromText, ToByteString (..), ToText (..), fromText)
 import           Network.AWS.S3.Types             (BucketName (..), ETag (..), ObjectKey (..))
 
 class Monad m => HasS3UpDB m where
@@ -48,23 +51,24 @@ instance FromRow PartialUpload where
     <*> field -- upid
     <*> pure []
 
-instance ToField ObjectKey where toField (ObjectKey k) = toField k
-instance FromField ObjectKey where
-  fromField f = case fieldData f of
-                  (SQLText t) -> Ok (ObjectKey t)
-                  _           -> returnError ConversionFailed f "invalid type for ObjectKey"
+textField :: (Typeable a, FromText a) => Field -> Ok a
+textField f = case fieldData f of
+                (SQLText t) -> either (returnError ConversionFailed f) Ok (fromText t)
+                _           -> returnError ConversionFailed f "invalid type"
 
-instance ToField BucketName where toField (BucketName k) = toField k
-instance FromField BucketName where
-  fromField f = case fieldData f of
-                  (SQLText t) -> Ok (BucketName t)
-                  _           -> returnError ConversionFailed f "invalid type for BucketName"
+blobField :: Typeable a => (BS.ByteString -> a) -> Field -> Ok a
+blobField c f = case fieldData f of
+                  (SQLBlob b) -> Ok (c b)
+                  _           -> returnError ConversionFailed f "invalid type"
 
-instance ToField ETag where toField (ETag k) = toField k
-instance FromField ETag where
-  fromField f = case fieldData f of
-                  (SQLBlob b) -> Ok (ETag b)
-                  _           -> returnError ConversionFailed f "invalid type for ETag"
+instance ToField ObjectKey where toField = toField . toText
+instance FromField ObjectKey where fromField = textField
+
+instance ToField BucketName where toField = toField . toText
+instance FromField BucketName where fromField = textField
+
+instance ToField ETag where toField = toField . toBS
+instance FromField ETag where fromField = blobField ETag
 
 initQueries :: [(Int, Query)]
 initQueries = [
