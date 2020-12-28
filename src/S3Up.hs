@@ -46,10 +46,10 @@ data Options = Options {
   } deriving Show
 
 data Env = Env
-    { s3Options  :: Options
-    , s3Region   :: Region
-    , dbConn     :: Connection
-    , envLoggers :: [Loc -> LogSource -> LogLevel -> LogStr -> IO ()]
+    { s3Options :: Options
+    , s3Region  :: Region
+    , dbConn    :: Connection
+    , envLogger :: Loc -> LogSource -> LogLevel -> LogStr -> IO ()
     }
 
 newtype S3Up a = S3Up
@@ -61,7 +61,7 @@ instance (Monad m, MonadReader Env m) => HasS3UpDB m where
   s3UpDB = asks dbConn
 
 instance MonadLogger S3Up where
-  monadLoggerLog loc src lvl msg = mapM_ (\l -> liftIO $ l loc src lvl (toLogStr msg)) =<< asks envLoggers
+  monadLoggerLog loc src lvl msg = asks envLogger >>= \l -> liftIO $ l loc src lvl (toLogStr msg)
 
 instance MonadPlus S3Up where
   mzero = error "S3Up zero"
@@ -149,4 +149,4 @@ runWithOptions o@Options{..} a = withConnection optDBPath $ \db -> do
   initTables db
   let o' = o{optArgv = tail optArgv}
       minLvl = if optVerbose then LevelDebug else LevelInfo
-  liftIO $ runIO (Env o' NorthVirginia db [baseLogger minLvl]) a
+  liftIO $ runIO (Env o' NorthVirginia db (baseLogger minLvl)) a
