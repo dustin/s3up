@@ -52,12 +52,8 @@ runUpload = do
         mb = (`div` (1024*1024))
 
 runList :: S3Up ()
-runList = do
-  ps <- listMultiparts
-  mapM_ printRemote ps
-
-  where
-    printRemote (t,k,i) = liftIO . putStrLn $ fold ["- ", show t, " ", show k, " ID: ", show i]
+runList = mapM_ printRemote =<< listMultiparts
+  where printRemote (t,k,i) = liftIO . putStrLn $ fold ["- ", show t, " ", show k, " ID: ", show i]
 
 runAbort :: S3Up ()
 runAbort = do
