@@ -20,22 +20,19 @@ baseLogger minLvl _ _ lvl s = when (lvl >= minLvl) $ C8.hPutStrLn stderr (fromLo
                LevelError   -> "E"
                LevelOther x -> fromString . T.unpack $ x
 
-logError :: MonadLogger m => T.Text -> m ()
-logError = logErrorN
+-- Text loggers
+logError, logInfo, logDbg :: MonadLogger m => T.Text -> m ()
 
-logErrorL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
+-- List loggers
+logErrorL, logInfoL, logDbgL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
+
+logError = logErrorN
 logErrorL = logErrorN . fold
 
-logInfo :: MonadLogger m => T.Text -> m ()
 logInfo = logInfoN
-
-logInfoL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
 logInfoL = logInfoN . fold
 
-logDbg :: MonadLogger m => T.Text -> m ()
 logDbg = logDebugN
-
-logDbgL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
 logDbgL = logDebugN . fold
 
 tshow :: Show a => a -> T.Text
