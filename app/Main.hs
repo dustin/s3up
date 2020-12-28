@@ -37,8 +37,9 @@ runCreate = do
   unless (length argv == 2) $ fail "filename and destination key required"
   let [filename, key] = argv
   PartialUpload{..} <- createMultipart filename (fromString key)
-  logInfoL ["Created upload for ", tshow _pu_bucket, ":", tshow _pu_key, " in ",
-            tshow (length _pu_parts), " parts as ", _pu_upid]
+  logDbgL ["Created upload for ", tshow _pu_bucket, ":", tshow _pu_key, " in ",
+           tshow (length _pu_parts), " parts as ", _pu_upid]
+  logInfo "Upload created.  Use the 'upload' command to complete."
 
 runUpload :: S3Up ()
 runUpload = do
