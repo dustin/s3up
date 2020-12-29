@@ -5,9 +5,9 @@ import           Control.Monad.IO.Class (MonadIO (..))
 import           Data.Foldable          (fold)
 import           Data.Maybe             (isNothing)
 import           Network.AWS.S3         (ObjectKey (..))
-import           Options.Applicative    (Parser, ReadM, argument, auto, command, execParser, fullDesc, help, helper,
-                                         info, long, metavar, option, progDesc, readerError, short, showDefault, str,
-                                         strOption, subparser, switch, value, (<**>))
+import           Options.Applicative    (Parser, ReadM, argument, auto, command, customExecParser, fullDesc, help,
+                                         helper, info, long, metavar, option, prefs, progDesc, readerError, short,
+                                         showDefault, showHelpOnError, str, strOption, subparser, switch, value, (<**>))
 import           System.Directory       (createDirectoryIfMissing, getHomeDirectory)
 import           System.FilePath.Posix  ((</>))
 
@@ -69,7 +69,7 @@ main :: IO ()
 main = do
   confdir <- (</> ".config/s3up") <$> getHomeDirectory
   createDirectoryIfMissing True confdir
-  o@Options{..} <- execParser (opts confdir)
+  o@Options{..} <- customExecParser (prefs showHelpOnError) (opts confdir)
   runWithOptions o (run optCommand)
 
   where
