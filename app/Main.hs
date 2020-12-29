@@ -6,7 +6,7 @@ import           Data.Foldable          (fold)
 import           Data.Maybe             (isNothing)
 import           Network.AWS.S3         (ObjectKey (..))
 import           Options.Applicative    (Parser, ReadM, argument, auto, command, execParser, fullDesc, help, helper,
-                                         info, long, metavar, option, progDesc, readerError, short, showDefault,
+                                         info, long, metavar, option, progDesc, readerError, short, showDefault, str,
                                          strOption, subparser, switch, value, (<**>))
 import           System.Directory       (createDirectoryIfMissing, getHomeDirectory)
 import           System.FilePath.Posix  ((</>))
@@ -34,8 +34,8 @@ options confdir = Options
                   <> command "abort" (info abort (progDesc "Abort an upload"))
                 )
   where
-    create = Create <$> argument auto (metavar "filename") <*> argument auto (metavar "objkey")
-    abort = Abort <$> argument auto (metavar "objkey") <*> argument auto (metavar "uploadIID")
+    create = Create <$> argument str (metavar "filename") <*> argument str (metavar "objkey")
+    abort = Abort <$> argument str (metavar "objkey") <*> argument str (metavar "uploadIID")
 
 
 runCreate :: FilePath -> ObjectKey -> S3Up ()
