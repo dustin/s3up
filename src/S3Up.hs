@@ -20,6 +20,7 @@ import           Control.Monad.Logger         (Loc (..), LogLevel (..), LogSourc
 import           Control.Monad.Reader         (MonadReader, ReaderT (..), asks)
 import           Control.Monad.Trans.AWS      (AWST', Credentials (..), envRegion, newEnv, runAWST, runResourceT, send)
 import           Control.Monad.Trans.Resource (ResourceT)
+import           Control.Retry                (RetryStatus (..), exponentialBackoff, limitRetries, recoverAll)
 import qualified Data.ByteString.Lazy         as BL
 import           Data.List                    (sort)
 import           Data.Text                    (Text)
@@ -37,13 +38,19 @@ import qualified S3Up.DB                      as DB
 import           S3Up.Logging
 import           S3Up.Types
 
+data Command = Create FilePath ObjectKey
+             | Upload
+             | List
+             | Abort ObjectKey S3UploadID
+             deriving Show
+
 data Options = Options {
   optDBPath      :: FilePath,
   optBucket      :: BucketName,
   optChunkSize   :: Integer,
   optVerbose     :: Bool,
   optConcurrency :: Int,
-  optArgv        :: [String]
+  optCommand     :: Command
   } deriving Show
 
 data Env = Env
@@ -122,11 +129,14 @@ completeUpload PartialUpload{..} = do
       body <- liftIO $ withFile _pu_filename ReadMode $ \fh -> do
         hSeek fh AbsoluteSeek ((fromIntegral n - 1) * _pu_chunkSize)
         Hashed . toHashed <$> BL.hGet fh (fromIntegral _pu_chunkSize)
-      logDbgL ["uploading chunk ", tshow n, " ", tshow body]
-      Just etag <- view uprsETag <$> inAWSRegion r (send $ uploadPart _pu_bucket _pu_key n _pu_upid body)
+      Just etag <- recoverAll policy $ \rs -> do
+        logDbgL ["uploading chunk ", tshow n, " ", tshow body, " attempt ", tshow (rsIterNumber rs)]
+        view uprsETag <$> inAWSRegion r (send $ uploadPart _pu_bucket _pu_key n _pu_upid body)
       DB.completedUploadPart _pu_id n etag
       logDbgL ["finished chunk ", tshow n, " ", tshow body, " as ", tshow etag]
       pure (n, etag)
+
+    policy = exponentialBackoff 2000000 <> limitRetries 9
 
 listMultiparts :: S3Up [(UTCTime, ObjectKey, Text)]
 listMultiparts = do
@@ -148,6 +158,5 @@ runIO e m = runReaderT (runS3Up m) e
 runWithOptions :: Options -> S3Up a -> IO a
 runWithOptions o@Options{..} a = withConnection optDBPath $ \db -> do
   DB.initTables db
-  let o' = o{optArgv = tail optArgv}
-      minLvl = if optVerbose then LevelDebug else LevelInfo
-  liftIO $ runIO (Env o' NorthVirginia db (baseLogger minLvl)) a
+  let minLvl = if optVerbose then LevelDebug else LevelInfo
+  liftIO $ runIO (Env o NorthVirginia db (baseLogger minLvl)) a

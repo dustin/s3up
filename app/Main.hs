@@ -2,14 +2,12 @@ module Main where
 
 import           Control.Monad          (unless)
 import           Control.Monad.IO.Class (MonadIO (..))
-import           Control.Monad.Reader   (asks)
 import           Data.Foldable          (fold)
-import           Data.List              (intercalate)
-import           Data.Maybe             (fromMaybe, isNothing)
-import           Data.String            (fromString)
-import           Options.Applicative    (Parser, ReadM, argument, auto, execParser, fullDesc, help, helper, info, long,
-                                         metavar, option, progDesc, readerError, short, showDefault, some, str,
-                                         strOption, switch, value, (<**>))
+import           Data.Maybe             (isNothing)
+import           Network.AWS.S3         (ObjectKey (..))
+import           Options.Applicative    (Parser, ReadM, argument, auto, command, execParser, fullDesc, help, helper,
+                                         info, long, metavar, option, progDesc, readerError, short, showDefault,
+                                         strOption, subparser, switch, value, (<**>))
 import           System.Directory       (createDirectoryIfMissing, getHomeDirectory)
 import           System.FilePath.Posix  ((</>))
 
@@ -30,14 +28,19 @@ options confdir = Options
   <*> switch (short 'v' <> long "verbose" <> help "enable debug logging")
   <*> option (atLeast 1) (short 'u' <> long "upload-concurrency" <> showDefault
                           <> value 3 <> help "Upload concurrency")
-  <*> some (argument str (metavar "cmd args..."))
+  <*> subparser ( command "create" (info create (progDesc "Create a new upload"))
+                  <> command "upload" (info (pure Upload) (progDesc "Upload outstanding data"))
+                  <> command "list" (info (pure List) (progDesc "List current uploads"))
+                  <> command "abort" (info abort (progDesc "Abort an upload"))
+                )
+  where
+    create = Create <$> argument auto (metavar "filename") <*> argument auto (metavar "objkey")
+    abort = Abort <$> argument auto (metavar "objkey") <*> argument auto (metavar "uploadIID")
 
-runCreate :: S3Up ()
-runCreate = do
-  argv <- asks (optArgv . s3Options)
-  unless (length argv == 2) $ fail "filename and destination key required"
-  let [filename, key] = argv
-  PartialUpload{..} <- createMultipart filename (fromString key)
+
+runCreate :: FilePath -> ObjectKey -> S3Up ()
+runCreate filename key = do
+  PartialUpload{..} <- createMultipart filename key
   logDbgL ["Created upload for ", tshow _pu_bucket, ":", tshow _pu_key, " in ",
            tshow (length _pu_parts), " parts as ", _pu_upid]
   logInfo "Upload created.  Use the 'upload' command to complete."
@@ -56,32 +59,18 @@ runList :: S3Up ()
 runList = mapM_ printRemote =<< listMultiparts
   where printRemote (t,k,i) = liftIO . putStrLn $ fold ["- ", show t, " ", show k, " ID: ", show i]
 
-runAbort :: S3Up ()
-runAbort = do
-  argv <- asks (optArgv . s3Options)
-  unless (length argv == 2) $ fail "key and upload ID required"
-  let [keyS, upIDS] = argv
-  abortUpload (fromString keyS) (fromString upIDS)
-
-run :: String -> S3Up ()
-run c = fromMaybe (liftIO unknown) $ lookup c cmds
-  where
-    cmds = [("create", runCreate),
-            ("upload", runUpload),
-            ("list", runList),
-            ("abort", runAbort)
-           ]
-    unknown = do
-      putStrLn $ "Unknown command: " <> c
-      putStrLn "Try one of these:"
-      putStrLn $ "    " <> intercalate "\n    " (map fst cmds)
+run :: Command -> S3Up ()
+run (Create f o) = runCreate f o
+run Upload       = runUpload
+run List         = runList
+run (Abort o i)  = abortUpload o i
 
 main :: IO ()
 main = do
   confdir <- (</> ".config/s3up") <$> getHomeDirectory
   createDirectoryIfMissing True confdir
   o@Options{..} <- execParser (opts confdir)
-  runWithOptions o (run (head optArgv))
+  runWithOptions o (run optCommand)
 
   where
     opts confdir = info (options confdir <**> helper)
