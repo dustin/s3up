@@ -8,12 +8,10 @@
 
 module S3Up where
 
-import           Control.Applicative          (Alternative (..), (<|>))
 import           Control.Concurrent.QSem      (newQSem, signalQSem, waitQSem)
 import           Control.Lens
-import           Control.Monad                (MonadPlus (..), mzero, void)
-import           Control.Monad.Catch          (MonadCatch (..), MonadMask (..), MonadThrow (..), SomeException (..),
-                                               bracket_, catch)
+import           Control.Monad                (void)
+import           Control.Monad.Catch          (MonadCatch (..), MonadMask (..), MonadThrow (..), bracket_)
 import           Control.Monad.IO.Class       (MonadIO (..))
 import           Control.Monad.Logger         (Loc (..), LogLevel (..), LogSource, LogStr, MonadLogger (..),
                                                ToLogStr (..), monadLoggerLog)
@@ -70,13 +68,6 @@ instance (Monad m, MonadReader Env m) => DB.HasS3UpDB m where
 
 instance MonadLogger S3Up where
   monadLoggerLog loc src lvl msg = asks envLogger >>= \l -> liftIO $ l loc src lvl (toLogStr msg)
-
-instance MonadPlus S3Up where
-  mzero = error "S3Up zero"
-
-instance Alternative S3Up where
-  empty = mzero
-  a <|> b = a `catch` \(SomeException _) -> b
 
 mapConcurrentlyLimited :: (MonadMask m, MonadUnliftIO m, Traversable f)
                        => Int
