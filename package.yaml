@@ -45,6 +45,7 @@ dependencies:
 - directory
 - filepath
 - time
+- retry
 
 library:
   source-dirs: src
