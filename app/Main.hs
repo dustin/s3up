@@ -1,3 +1,5 @@
+{-# LANGUAGE ViewPatterns #-}
+
 module Main where
 
 import           Control.Monad          (unless)
@@ -39,7 +41,7 @@ options confdir = Options
 
 
 runCreate :: FilePath -> ObjectKey -> S3Up ()
-runCreate filename key = do
+runCreate filename (mkObjectKey filename -> key) = do
   PartialUpload{..} <- createMultipart filename key
   logDbgL ["Created upload for ", tshow _pu_bucket, ":", tshow _pu_key, " in ",
            tshow (length _pu_parts), " parts as ", _pu_upid]

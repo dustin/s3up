@@ -22,12 +22,14 @@ import           Control.Retry                (RetryStatus (..), exponentialBack
 import qualified Data.ByteString.Lazy         as BL
 import           Data.List                    (sort)
 import           Data.Text                    (Text)
+import qualified Data.Text                    as T
 import           Data.Time.Clock              (UTCTime)
 import           Database.SQLite.Simple       (Connection, withConnection)
 import           GHC.Exts                     (IsList (..))
 import           Network.AWS.Data.Body        (RqBody (Hashed), ToHashedBody (..))
 import qualified Network.AWS.Env              as AWSE
 import           Network.AWS.S3
+import           System.FilePath.Posix        (takeFileName)
 import           System.IO                    (IOMode (..), SeekMode (..), hSeek, withFile)
 import           System.Posix.Files           (fileSize, getFileStatus)
 import           UnliftIO                     (MonadUnliftIO (..), mapConcurrently)
@@ -76,6 +78,12 @@ mapConcurrentlyLimited :: (MonadMask m, MonadUnliftIO m, Traversable f)
                        -> m (f b)
 mapConcurrentlyLimited n f l = liftIO (newQSem n) >>= \q -> mapConcurrently (b q) l
   where b q x = bracket_ (liftIO (waitQSem q)) (liftIO (signalQSem q)) (f x)
+
+mkObjectKey :: FilePath -> ObjectKey -> ObjectKey
+mkObjectKey filename = _ObjectKey %~ affix
+  where affix p
+          | "/" `T.isSuffixOf` p = p <> T.pack (takeFileName filename)
+          | otherwise = p
 
 -- Run an action in any AWS location
 inAWS :: (MonadCatch m, MonadUnliftIO m) => AWST' AWSE.Env (ResourceT m) a -> m a
