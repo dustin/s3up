@@ -2,8 +2,11 @@
 
 module Main where
 
-import           Control.Monad          (unless)
+import           Control.Applicative    ((<|>))
+import           Control.Monad          (unless, when)
+import           Control.Monad.Catch    (bracket_)
 import           Control.Monad.IO.Class (MonadIO (..))
+import           Data.Char              (toLower)
 import           Data.Foldable          (fold)
 import           Data.Maybe             (isNothing)
 import           Network.AWS.S3         (ObjectKey (..))
@@ -12,6 +15,8 @@ import           Options.Applicative    (Parser, ReadM, argument, auto, command,
                                          showDefault, showHelpOnError, str, strOption, subparser, switch, value, (<**>))
 import           System.Directory       (createDirectoryIfMissing, getHomeDirectory)
 import           System.FilePath.Posix  ((</>))
+import           System.IO              (BufferMode (..), hFlush, hGetBuffering, hGetChar, hGetEcho, hSetBuffering,
+                                         hSetEcho, stdin, stdout)
 
 import           S3Up
 import qualified S3Up.DB                as DB
@@ -37,7 +42,8 @@ options confdir = Options
                 )
   where
     create = Create <$> argument str (metavar "filename") <*> argument str (metavar "objkey")
-    abort = Abort <$> argument str (metavar "objkey") <*> argument str (metavar "uploadIID")
+    abort = Abort <$> argument str (metavar "objkey") <*> argument str (metavar "uploadID")
+            <|> pure InteractiveAbort
 
 
 runCreate :: FilePath -> ObjectKey -> S3Up ()
@@ -61,11 +67,39 @@ runList :: S3Up ()
 runList = mapM_ printRemote =<< listMultiparts
   where printRemote (t,k,i) = liftIO . putStrLn $ fold ["- ", show t, " ", show k, " ID: ", show i]
 
+prompt :: MonadIO m => String -> m Bool
+prompt s = liftIO (putStr s >> hFlush stdout >> bufd wait)
+
+    where
+      wait = do
+        x <- hGetChar stdin
+        case toLower x of
+          'y'  -> pure True
+          'n'  -> pure False
+          '\n' -> pure False
+          _    -> wait
+
+      bufd a = do
+        olde <- hGetEcho stdin
+        oldb <- hGetBuffering stdin
+        bracket_ (hSetEcho stdin False >> hSetBuffering stdin NoBuffering)
+          (hSetEcho stdin olde >> hSetBuffering stdin oldb) a
+
+runInteractiveAbort :: S3Up ()
+runInteractiveAbort = mapM_ askAbort =<< listMultiparts
+  where
+    askAbort (t,k,i) = do
+      liftIO . putStrLn $ fold [show t, " ", show k]
+      shouldAbort <- prompt "delete? (y/N) "
+      when shouldAbort $ abortUpload k i
+      liftIO (putStrLn "")
+
 run :: Command -> S3Up ()
-run (Create f o) = runCreate f o
-run Upload       = runUpload
-run List         = runList
-run (Abort o i)  = abortUpload o i
+run (Create f o)     = runCreate f o
+run Upload           = runUpload
+run List             = runList
+run (Abort o i)      = abortUpload o i
+run InteractiveAbort = runInteractiveAbort
 
 main :: IO ()
 main = do

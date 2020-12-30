@@ -41,6 +41,7 @@ import           S3Up.Types
 data Command = Create FilePath ObjectKey
              | Upload
              | List
+             | InteractiveAbort
              | Abort ObjectKey S3UploadID
              deriving Show
 
