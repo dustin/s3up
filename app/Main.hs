@@ -8,6 +8,7 @@ import           Control.Monad.Catch    (bracket_)
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Data.Char              (toLower)
 import           Data.Foldable          (fold)
+import qualified Data.Map.Strict        as Map
 import           Data.Maybe             (isNothing)
 import           Network.AWS.S3         (ObjectKey (..))
 import           Options.Applicative    (Parser, ReadM, argument, auto, command, customExecParser, fullDesc, help,
@@ -64,8 +65,15 @@ runUpload = do
         mb = (`div` (1024*1024))
 
 runList :: S3Up ()
-runList = mapM_ printRemote =<< listMultiparts
-  where printRemote (t,k,i) = liftIO . putStrLn $ fold ["- ", show t, " ", show k, " ID: ", show i]
+runList = do
+  local <- Map.fromList . fmap (\pu@PartialUpload{..} -> (_pu_upid, completeStr pu)) <$> DB.listPartialUploads
+  mapM_ (printRemote local) =<< listMultiparts
+  where
+    printRemote m (t,k,i) = liftIO . putStrLn $ fold ["- ", show t,
+                                                      "\n  ", scomp m i,
+                                                      "\n  ", show k,
+                                                      "\n  ID: ", show i]
+    scomp m i = Map.findWithDefault "(unmanaged)" i m
 
 prompt :: MonadIO m => String -> m Bool
 prompt s = liftIO (putStr s >> hFlush stdout >> bufd wait)

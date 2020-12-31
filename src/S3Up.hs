@@ -21,6 +21,7 @@ import           Control.Monad.Trans.Resource (ResourceT)
 import           Control.Retry                (RetryStatus (..), exponentialBackoff, limitRetries, recoverAll)
 import qualified Data.ByteString.Lazy         as BL
 import           Data.List                    (sort)
+import           Data.Maybe                   (isJust)
 import           Data.Text                    (Text)
 import qualified Data.Text                    as T
 import           Data.Time.Clock              (UTCTime)
@@ -112,11 +113,18 @@ createMultipart fp key = do
   let chunks = [1 .. ceiling @Double (fromIntegral fsize / fromIntegral chunkSize)]
   DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. cmursUploadId . _Just) ((,Nothing) <$> chunks)
 
+completeStr :: PartialUpload -> String
+completeStr PartialUpload{..} = show perc <> "% of around " <> show mb <> " MB complete"
+  where todo = filter (isJust . snd) _pu_parts
+        perc = 100 * length todo `div` length _pu_parts
+        mb = fromIntegral _pu_chunkSize * length _pu_parts `div` (1024*1024)
+
 completeUpload :: PartialUpload -> S3Up ()
-completeUpload PartialUpload{..} = do
+completeUpload pu@PartialUpload{..} = do
   r <- bucketRegion _pu_bucket
   c <- asks (optConcurrency . s3Options)
-  logInfoL ["Uploading remaining parts of ", tshow _pu_filename, " to ", tshow _pu_bucket, ":", tshow _pu_key]
+  logInfoL ["Uploading remaining parts of ", tshow _pu_filename, " to ", tshow _pu_bucket, ":", tshow _pu_key,
+            " ", T.pack (completeStr pu)]
   finished <- fromList . sort <$> mapConcurrentlyLimited c (uc r) _pu_parts
   logInfoL ["Completed all parts of ", tshow _pu_filename, " to ", tshow _pu_bucket, ":", tshow _pu_key]
   let completed = completedMultipartUpload & cmuParts ?~ (uncurry completedPart <$> finished)
