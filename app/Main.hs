@@ -1,4 +1,5 @@
-{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ViewPatterns  #-}
 
 module Main where
 
@@ -6,10 +7,13 @@ import           Control.Applicative    ((<|>))
 import           Control.Monad          (unless, when)
 import           Control.Monad.Catch    (bracket_)
 import           Control.Monad.IO.Class (MonadIO (..))
+import           Control.Monad.Reader   (asks)
 import           Data.Char              (toLower)
 import           Data.Foldable          (fold)
 import qualified Data.Map.Strict        as Map
 import           Data.Maybe             (isNothing)
+import qualified Data.Text              as T
+import           Network.AWS.Data.Text  (ToText (..))
 import           Network.AWS.S3         (ObjectKey (..))
 import           Options.Applicative    (Parser, ReadM, argument, auto, command, customExecParser, fullDesc, help,
                                          helper, info, long, metavar, option, prefs, progDesc, readerError, short,
@@ -18,6 +22,7 @@ import           System.Directory       (createDirectoryIfMissing, getHomeDirect
 import           System.FilePath.Posix  ((</>))
 import           System.IO              (BufferMode (..), hFlush, hGetBuffering, hGetChar, hGetEcho, hSetBuffering,
                                          hSetEcho, stdin, stdout)
+import           UnliftIO               (mapConcurrently)
 
 import           S3Up
 import qualified S3Up.DB                as DB
@@ -66,13 +71,17 @@ runUpload = do
 
 runList :: S3Up ()
 runList = do
-  local <- Map.fromList . fmap (\pu@PartialUpload{..} -> (_pu_upid, completeStr pu)) <$> DB.listPartialUploads
-  mapM_ (printRemote local) =<< listMultiparts
+  local <- Map.fromList . fmap (\pu@PartialUpload{..} -> ((_pu_bucket, _pu_upid), completeStr pu)) <$> DB.listPartialUploads
+  mapM_ (printBucket local) =<< mapConcurrently (\b -> (b,) <$> listMultiparts b) =<< allBuckets
   where
-    printRemote m (t,k,i) = liftIO . putStrLn $ fold ["- ", show t,
-                                                      "\n  ", scomp m i,
-                                                      "\n  ", show k,
-                                                      "\n  ID: ", show i]
+    pl = liftIO . putStrLn . fold
+    printBucket _ (_,[]) = pure ()
+    printBucket m (b,xs) = pl ["In bucket: ", T.unpack (toText b)] >> mapM_ printRemote xs
+      where
+        printRemote (t,k,i) = pl ["- ", show t,
+                                  "\n  ", scomp m (b,i),
+                                  "\n  ", show k,
+                                  "\n  ID: ", show i]
     scomp m i = Map.findWithDefault "(unmanaged)" i m
 
 prompt :: MonadIO m => String -> m Bool
@@ -94,7 +103,7 @@ prompt s = liftIO (putStr s >> hFlush stdout >> bufd wait)
           (hSetEcho stdin olde >> hSetBuffering stdin oldb) a
 
 runInteractiveAbort :: S3Up ()
-runInteractiveAbort = mapM_ askAbort =<< listMultiparts
+runInteractiveAbort = mapM_ askAbort =<< listMultiparts =<< asks (optBucket . s3Options)
   where
     askAbort (t,k,i) = do
       liftIO . putStrLn $ fold [show t, " ", show k]

@@ -146,13 +146,15 @@ completeUpload pu@PartialUpload{..} = do
 
     policy = exponentialBackoff 2000000 <> limitRetries 9
 
-listMultiparts :: S3Up [(UTCTime, ObjectKey, Text)]
-listMultiparts = do
-  b <- asks (optBucket . s3Options)
+listMultiparts :: BucketName -> S3Up [(UTCTime, ObjectKey, Text)]
+listMultiparts b = do
   ups <- inAWSBucket b $ send $ listMultipartUploads b
   pure $ ups ^.. lmursUploads . folded . to (\u -> (u ^?! muInitiated . _Just,
                                                     u ^?! muKey . _Just,
                                                     u ^. muUploadId . _Just))
+
+allBuckets :: S3Up [BucketName]
+allBuckets = toListOf (lbrsBuckets . folded . bName) <$> (inAWS . send $ listBuckets)
 
 abortUpload :: ObjectKey -> S3UploadID -> S3Up ()
 abortUpload k u = do
