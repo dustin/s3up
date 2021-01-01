@@ -108,8 +108,8 @@ runInteractiveAbort = mapM_ askAbort =<< listMultiparts =<< asks (optBucket . s3
     askAbort (t,k,i) = do
       liftIO . putStrLn $ fold [show t, " ", show k]
       shouldAbort <- prompt "delete? (y/N) "
-      when shouldAbort $ abortUpload k i
       liftIO (putStrLn "")
+      when shouldAbort $ logInfoL ["Deleting ", tshow i] >> abortUpload k i
 
 run :: Command -> S3Up ()
 run (Create f o)     = runCreate f o
