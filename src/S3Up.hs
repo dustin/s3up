@@ -52,6 +52,7 @@ data Options = Options {
   optDBPath      :: FilePath,
   optBucket      :: BucketName,
   optChunkSize   :: Integer,
+  optClass       :: StorageClass,
   optVerbose     :: Bool,
   optConcurrency :: Int,
   optCommand     :: Command
@@ -117,8 +118,9 @@ createMultipart :: FilePath -> ObjectKey -> S3Up PartialUpload
 createMultipart fp key = do
   fsize <- toInteger . fileSize <$> (liftIO . getFileStatus) fp
   b <- asks (optBucket . s3Options)
+  cClass <- asks (optClass . s3Options)
   chunkSize <- asks (optChunkSize . s3Options)
-  up <- inAWSBucket b $ send $ createMultipartUpload b key
+  up <- inAWSBucket b $ send $ createMultipartUpload b key & cmuStorageClass ?~ cClass
   let chunks = [1 .. ceiling @Double (fromIntegral fsize / fromIntegral chunkSize)]
   DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. cmursUploadId . _Just) ((,Nothing) <$> chunks)
 

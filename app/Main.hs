@@ -3,29 +3,33 @@
 
 module Main where
 
-import           Control.Applicative    ((<|>))
-import           Control.Monad          (unless, when)
-import           Control.Monad.Catch    (bracket_)
-import           Control.Monad.IO.Class (MonadIO (..))
-import           Control.Monad.Reader   (asks)
-import           Data.Char              (toLower)
-import           Data.Foldable          (fold)
-import qualified Data.Map.Strict        as Map
-import           Data.Maybe             (isNothing)
-import qualified Data.Text              as T
-import           Network.AWS.Data.Text  (ToText (..))
-import           Network.AWS.S3         (ObjectKey (..))
-import           Options.Applicative    (Parser, ReadM, argument, auto, command, customExecParser, fullDesc, help,
-                                         helper, info, long, metavar, option, prefs, progDesc, readerError, short,
-                                         showDefault, showHelpOnError, str, strOption, subparser, switch, value, (<**>))
-import           System.Directory       (createDirectoryIfMissing, getHomeDirectory)
-import           System.FilePath.Posix  ((</>))
-import           System.IO              (BufferMode (..), hFlush, hGetBuffering, hGetChar, hGetEcho, hSetBuffering,
-                                         hSetEcho, stdin, stdout)
-import           UnliftIO               (mapConcurrently)
+import           Control.Applicative                  ((<|>))
+import           Control.Monad                        (unless, when)
+import           Control.Monad.Catch                  (bracket_)
+import           Control.Monad.IO.Class               (MonadIO (..))
+import           Control.Monad.Reader                 (asks)
+import           Data.Char                            (toLower)
+import           Data.Foldable                        (fold)
+import           Data.List                            (intercalate, sortOn)
+import qualified Data.Map.Strict                      as Map
+import           Data.Maybe                           (isNothing)
+import qualified Data.Text                            as T
+import           Network.AWS.Data.Text                (ToText (..))
+import           Network.AWS.S3                       (ObjectKey (..), StorageClass (..))
+import           Options.Applicative                  (Parser, ReadM, argument, auto, command, customExecParser,
+                                                       eitherReader, fullDesc, help, helper, info, long, metavar,
+                                                       option, prefs, progDesc, readerError, short, showDefault,
+                                                       showHelpOnError, str, strOption, subparser, switch, value,
+                                                       (<**>))
+import           Options.Applicative.Help.Levenshtein (editDistance)
+import           System.Directory                     (createDirectoryIfMissing, getHomeDirectory)
+import           System.FilePath.Posix                ((</>))
+import           System.IO                            (BufferMode (..), hFlush, hGetBuffering, hGetChar, hGetEcho,
+                                                       hSetBuffering, hSetEcho, stdin, stdout)
+import           UnliftIO                             (mapConcurrently)
 
 import           S3Up
-import qualified S3Up.DB                as DB
+import qualified S3Up.DB                              as DB
 import           S3Up.Logging
 import           S3Up.Types
 
@@ -38,6 +42,8 @@ options confdir = Options
   <*> strOption (long "bucket" <> showDefault <> value "junk.west.spy.net" <> help "s3 bucket")
   <*> option (atLeast (5*1024*1024)) (short 's' <> long "chunk-size" <> showDefault
                                       <> value (6 * 1024 * 1024) <> help "upload chunk size")
+  <*> option sclass (short 'c' <> long "storage-class" <> showDefault
+                     <> value Standard <> help "storage class")
   <*> switch (short 'v' <> long "verbose" <> help "enable debug logging")
   <*> option (atLeast 1) (short 'u' <> long "upload-concurrency" <> showDefault
                           <> value 3 <> help "Upload concurrency")
@@ -50,7 +56,15 @@ options confdir = Options
     create = Create <$> argument str (metavar "filename") <*> argument str (metavar "objkey")
     abort = Abort <$> argument str (metavar "objkey") <*> argument str (metavar "uploadID")
             <|> pure InteractiveAbort
+    classes = [("onezone-ia", OnezoneIA),
+               ("rr", ReducedRedundancy),
+               ("standard", Standard),
+               ("standard-ia", StandardIA)]
+    sclass = eitherReader $ \s -> maybe (Left (inv "StorageClass" s (fst <$> classes))) Right $ lookup s classes
 
+    bestMatch n = head . sortOn (editDistance n)
+    inv t v vs = fold ["invalid ", t, ": ", show v, ", perhaps you meant: ", bestMatch v vs,
+                        "\nValid values:  ", intercalate ", " vs]
 
 runCreate :: FilePath -> ObjectKey -> S3Up ()
 runCreate filename (mkObjectKey filename -> key) = do
