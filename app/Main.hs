@@ -72,9 +72,10 @@ runUpload = do
 runList :: S3Up ()
 runList = do
   local <- Map.fromList . fmap (\pu@PartialUpload{..} -> ((_pu_bucket, _pu_upid), completeStr pu)) <$> DB.listPartialUploads
-  mapM_ (printBucket local) =<< mapConcurrently (\b -> (b,) <$> listMultiparts b) =<< allBuckets
+  mapM_ (printBucket local) =<< mapConcurrently (\b -> (b,) <$> tryList b) =<< allBuckets
   where
     pl = liftIO . putStrLn . fold
+    tryList b = listMultiparts b <|> (logErrorL ["Failed loading multiparts from ", tshow b] >> pure [])
     printBucket _ (_,[]) = pure ()
     printBucket m (b,xs) = pl ["In bucket: ", T.unpack (toText b)] >> mapM_ printRemote xs
       where
