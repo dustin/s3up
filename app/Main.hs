@@ -13,13 +13,14 @@ import           Data.Foldable                        (fold)
 import           Data.List                            (intercalate, sortOn)
 import qualified Data.Map.Strict                      as Map
 import           Data.Maybe                           (isNothing)
+import           Data.String                          (fromString)
 import qualified Data.Text                            as T
 import           Network.AWS.Data.Text                (ToText (..))
 import           Network.AWS.S3                       (ObjectKey (..), StorageClass (..))
 import           Options.Applicative                  (Parser, ReadM, argument, auto, command, customExecParser,
                                                        eitherReader, fullDesc, help, helper, info, long, metavar,
                                                        option, prefs, progDesc, readerError, short, showDefault,
-                                                       showHelpOnError, str, strOption, subparser, switch, value,
+                                                       showHelpOnError, some, str, strOption, subparser, switch, value,
                                                        (<**>))
 import           Options.Applicative.Help.Levenshtein (editDistance)
 import           System.Directory                     (createDirectoryIfMissing, getHomeDirectory)
@@ -47,13 +48,16 @@ options confdir = Options
   <*> switch (short 'v' <> long "verbose" <> help "enable debug logging")
   <*> option (atLeast 1) (short 'u' <> long "upload-concurrency" <> showDefault
                           <> value 3 <> help "Upload concurrency")
+  <*> option (atLeast 1) (long "create-concurrency" <> showDefault
+                          <> value 1 <> help "Create concurrency")
   <*> subparser ( command "create" (info create (progDesc "Create a new upload"))
                   <> command "upload" (info (pure Upload) (progDesc "Upload outstanding data"))
                   <> command "list" (info (pure List) (progDesc "List current uploads"))
                   <> command "abort" (info abort (progDesc "Abort an upload"))
                 )
   where
-    create = Create <$> argument str (metavar "filename") <*> argument str (metavar "objkey")
+    create = Create . parseDests <$> some (argument str (metavar "file objkey || file... objkey/"))
+
     abort = Abort <$> argument str (metavar "objkey") <*> argument str (metavar "uploadID")
             <|> pure InteractiveAbort
     classes = [("onezone-ia", OnezoneIA),
@@ -62,16 +66,34 @@ options confdir = Options
                ("standard-ia", StandardIA)]
     sclass = eitherReader $ \s -> maybe (Left (inv "StorageClass" s (fst <$> classes))) Right $ lookup s classes
 
+    parseDests [] = Left "insufficient arguments"
+    parseDests [_] = Left "insufficient arguments"
+    parseDests [a,b] = Right [(a,fromString b)]
+    parseDests (reverse -> (d:xs))
+      | isDir d && all isFile xs = Right $ map (\x -> (x, mkObjectKey x (fromString d))) xs
+      | otherwise = Left "final parameter must be an object ending in /"
+      where
+        isDir ""                   = False
+        isDir (reverse -> ('/':_)) = True
+        isDir _                    = False
+        isFile = not . isDir
+
     bestMatch n = head . sortOn (editDistance n)
     inv t v vs = fold ["invalid ", t, ": ", show v, ", perhaps you meant: ", bestMatch v vs,
                         "\nValid values:  ", intercalate ", " vs]
 
-runCreate :: FilePath -> ObjectKey -> S3Up ()
-runCreate filename (mkObjectKey filename -> key) = do
-  PartialUpload{..} <- createMultipart filename key
-  logDbgL ["Created upload for ", tshow _pu_bucket, ":", tshow _pu_key, " in ",
-           tshow (length _pu_parts), " parts as ", _pu_upid]
-  logInfo "Upload created.  Use the 'upload' command to complete."
+runCreate :: Either String [(FilePath, ObjectKey)] -> S3Up ()
+runCreate (Left e) = logErrorL ["Invalid paths for create: ", T.pack e]
+runCreate (Right xs) = do
+  c <- asks (optCreateConcurrency . s3Options)
+  mapConcurrentlyLimited_ c one xs
+
+  where
+    one (filename, key) = do
+      PartialUpload{..} <- createMultipart filename key
+      logDbgL ["Created upload for ", tshow _pu_bucket, ":", tshow _pu_key, " in ",
+               tshow (length _pu_parts), " parts as ", _pu_upid]
+      logInfo "Upload created.  Use the 'upload' command to complete."
 
 runUpload :: S3Up ()
 runUpload = do
@@ -127,7 +149,7 @@ runInteractiveAbort = mapM_ askAbort =<< listMultiparts =<< asks (optBucket . s3
       when shouldAbort $ logInfoL ["Deleting ", tshow i] >> abortUpload k i
 
 run :: Command -> S3Up ()
-run (Create f o)     = runCreate f o
+run (Create l)       = runCreate l
 run Upload           = runUpload
 run List             = runList
 run (Abort o i)      = abortUpload o i

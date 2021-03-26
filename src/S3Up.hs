@@ -35,13 +35,13 @@ import           Network.AWS.S3
 import           System.FilePath.Posix        (takeFileName)
 import           System.IO                    (IOMode (..), SeekMode (..), hSeek, withFile)
 import           System.Posix.Files           (fileSize, getFileStatus)
-import           UnliftIO                     (MonadUnliftIO (..), mapConcurrently)
+import           UnliftIO                     (MonadUnliftIO (..), mapConcurrently, mapConcurrently_)
 
 import qualified S3Up.DB                      as DB
 import           S3Up.Logging
 import           S3Up.Types
 
-data Command = Create FilePath ObjectKey
+data Command = Create (Either String [(FilePath, ObjectKey)])
              | Upload
              | List
              | InteractiveAbort
@@ -49,13 +49,14 @@ data Command = Create FilePath ObjectKey
              deriving Show
 
 data Options = Options {
-  optDBPath      :: FilePath,
-  optBucket      :: BucketName,
-  optChunkSize   :: Integer,
-  optClass       :: StorageClass,
-  optVerbose     :: Bool,
-  optConcurrency :: Int,
-  optCommand     :: Command
+  optDBPath            :: FilePath,
+  optBucket            :: BucketName,
+  optChunkSize         :: Integer,
+  optClass             :: StorageClass,
+  optVerbose           :: Bool,
+  optConcurrency       :: Int,
+  optCreateConcurrency :: Int,
+  optCommand           :: Command
   } deriving Show
 
 data Env = Env
@@ -89,6 +90,14 @@ mapConcurrentlyLimited :: (MonadMask m, MonadUnliftIO m, Traversable f)
                        -> f a
                        -> m (f b)
 mapConcurrentlyLimited n f l = liftIO (newQSem n) >>= \q -> mapConcurrently (b q) l
+  where b q x = bracket_ (liftIO (waitQSem q)) (liftIO (signalQSem q)) (f x)
+
+mapConcurrentlyLimited_ :: (MonadMask m, MonadUnliftIO m, Traversable f)
+                        => Int
+                        -> (a -> m b)
+                        -> f a
+                        -> m ()
+mapConcurrentlyLimited_ n f l = liftIO (newQSem n) >>= \q -> mapConcurrently_ (b q) l
   where b q x = bracket_ (liftIO (waitQSem q)) (liftIO (signalQSem q)) (f x)
 
 mkObjectKey :: FilePath -> ObjectKey -> ObjectKey
