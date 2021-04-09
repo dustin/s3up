@@ -68,7 +68,7 @@ options confdir = Options
 
     parseDests [] = Left "insufficient arguments"
     parseDests [_] = Left "insufficient arguments"
-    parseDests [a,b] = Right [(a,fromString b)]
+    parseDests [a,b] = Right [(a, mkObjectKey a (fromString b))]
     parseDests (reverse -> (d:xs))
       | isDir d && all isFile xs = Right $ map (\x -> (x, mkObjectKey x (fromString d))) xs
       | otherwise = Left "final parameter must be an object ending in /"
