@@ -24,7 +24,7 @@ import           Options.Applicative                  (Parser, ReadM, argument, 
 import           Options.Applicative.Help.Levenshtein (editDistance)
 import           System.Directory                     (createDirectoryIfMissing, getHomeDirectory)
 import           System.FilePath.Posix                ((</>))
-import           System.IO                            (BufferMode (..), hFlush, hGetBuffering, hGetChar, hGetEcho,
+import           System.IO                            (BufferMode (..), hFlush, hGetBuffering, getChar, hGetEcho,
                                                        hSetBuffering, hSetEcho, stdin, stdout)
 import           UnliftIO                             (mapConcurrently)
 
@@ -125,7 +125,7 @@ prompt s = liftIO (putStr s >> hFlush stdout >> bufd wait)
 
     where
       wait = do
-        x <- hGetChar stdin
+        x <- getChar
         case toLower x of
           'y'  -> pure True
           'n'  -> pure False
