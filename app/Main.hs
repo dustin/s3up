@@ -13,7 +13,6 @@ import           Data.Foldable                        (fold)
 import           Data.List                            (intercalate, sortOn)
 import qualified Data.Map.Strict                      as Map
 import           Data.Maybe                           (isNothing)
-import           Data.String                          (fromString)
 import qualified Data.Text                            as T
 import           Network.AWS.Data.Text                (ToText (..))
 import           Network.AWS.S3                       (ObjectKey (..), StorageClass (..))
@@ -68,9 +67,9 @@ options confdir = Options
 
     parseDests [] = Left "insufficient arguments"
     parseDests [_] = Left "insufficient arguments"
-    parseDests [a,b] = Right [(a, mkObjectKey a (fromString b))]
+    parseDests [x,d] = Right [(x, mkObjectKey x d)]
     parseDests (reverse -> (d:xs))
-      | isDir d && all isFile xs = Right $ map (\x -> (x, mkObjectKey x (fromString d))) xs
+      | isDir d && all isFile xs = Right $ map (\x -> (x, mkObjectKey x d)) xs
       | otherwise = Left "final parameter must be an object ending in /"
       where
         isDir ""                   = False

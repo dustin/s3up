@@ -24,6 +24,7 @@ import           Control.Retry                (RetryStatus (..), exponentialBack
 import qualified Data.ByteString.Lazy         as BL
 import           Data.List                    (sort)
 import           Data.Maybe                   (isJust)
+import           Data.String                  (fromString)
 import           Data.Text                    (Text)
 import qualified Data.Text                    as T
 import           Data.Time.Clock              (UTCTime)
@@ -100,8 +101,8 @@ mapConcurrentlyLimited_ :: (MonadMask m, MonadUnliftIO m, Traversable f)
 mapConcurrentlyLimited_ n f l = liftIO (newQSem n) >>= \q -> mapConcurrently_ (b q) l
   where b q x = bracket_ (liftIO (waitQSem q)) (liftIO (signalQSem q)) (f x)
 
-mkObjectKey :: FilePath -> ObjectKey -> ObjectKey
-mkObjectKey filename = _ObjectKey %~ affix
+mkObjectKey :: FilePath -> String -> ObjectKey
+mkObjectKey filename = (_ObjectKey %~ affix) . fromString
   where affix p
           | "/" `T.isSuffixOf` p = p <> T.pack (takeFileName filename)
           | otherwise = p
