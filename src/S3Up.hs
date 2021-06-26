@@ -23,6 +23,7 @@ import           Control.Monad.Trans.Resource (ResourceT)
 import           Control.Retry                (RetryStatus (..), exponentialBackoff, limitRetries, recoverAll)
 import qualified Data.ByteString.Lazy         as BL
 import           Data.List                    (sort)
+import           Data.List.NonEmpty           (NonEmpty(..))
 import           Data.Maybe                   (isJust)
 import           Data.String                  (fromString)
 import           Data.Text                    (Text)
@@ -42,7 +43,7 @@ import qualified S3Up.DB                      as DB
 import           S3Up.Logging
 import           S3Up.Types
 
-data Command = Create (Either String [(FilePath, ObjectKey)])
+data Command = Create (Either String (NonEmpty (FilePath, ObjectKey)))
              | Upload
              | List
              | InteractiveAbort

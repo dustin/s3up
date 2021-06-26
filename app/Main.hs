@@ -11,6 +11,8 @@ import           Control.Monad.Reader                 (asks)
 import           Data.Char                            (toLower)
 import           Data.Foldable                        (fold)
 import           Data.List                            (intercalate, sortOn)
+import           Data.List.NonEmpty                   (NonEmpty(..))
+import qualified Data.List.NonEmpty                   as NE
 import qualified Data.Map.Strict                      as Map
 import           Data.Maybe                           (isNothing)
 import qualified Data.Text                            as T
@@ -24,7 +26,7 @@ import           Options.Applicative                  (Parser, ReadM, argument, 
 import           Options.Applicative.Help.Levenshtein (editDistance)
 import           System.Directory                     (createDirectoryIfMissing, getHomeDirectory)
 import           System.FilePath.Posix                ((</>))
-import           System.IO                            (BufferMode (..), hFlush, hGetBuffering, getChar, hGetEcho,
+import           System.IO                            (BufferMode (..), hFlush, hGetBuffering, hGetEcho,
                                                        hSetBuffering, hSetEcho, stdin, stdout)
 import           UnliftIO                             (mapConcurrently)
 
@@ -67,9 +69,9 @@ options confdir = Options
 
     parseDests [] = Left "insufficient arguments"
     parseDests [_] = Left "insufficient arguments"
-    parseDests [x,d] = Right [(x, mkObjectKey x d)]
+    parseDests [x,d] = Right ((x, mkObjectKey x d) :| [])
     parseDests (reverse -> (d:xs))
-      | isDir d && all isFile xs = Right $ map (\x -> (x, mkObjectKey x d)) xs
+      | isDir d && all isFile xs = Right . NE.fromList $ map (\x -> (x, mkObjectKey x d)) xs
       | otherwise = Left "final parameter must be an object ending in /"
       where
         isDir ""                   = False
@@ -81,11 +83,14 @@ options confdir = Options
     inv t v vs = fold ["invalid ", t, ": ", show v, ", perhaps you meant: ", bestMatch v vs,
                         "\nValid values:  ", intercalate ", " vs]
 
-runCreate :: Either String [(FilePath, ObjectKey)] -> S3Up ()
+some1 :: Parser a -> Parser (NonEmpty a)
+some1 p = NE.fromList <$> some p
+
+runCreate :: Either String (NonEmpty (FilePath, ObjectKey)) -> S3Up ()
 runCreate (Left e) = logErrorL ["Invalid paths for create: ", T.pack e]
 runCreate (Right xs) = do
   c <- asks (optCreateConcurrency . s3Options)
-  mapConcurrentlyLimited_ c one xs
+  mapConcurrentlyLimited_ c one (NE.toList xs)
 
   where
     one (filename, key) = do
