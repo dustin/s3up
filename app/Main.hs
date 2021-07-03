@@ -90,7 +90,7 @@ runCreate :: Either String (NonEmpty (FilePath, ObjectKey)) -> S3Up ()
 runCreate (Left e) = logErrorL ["Invalid paths for create: ", T.pack e]
 runCreate (Right xs) = do
   c <- asks (optCreateConcurrency . s3Options)
-  mapConcurrentlyLimited_ c one (NE.toList xs)
+  mapConcurrentlyLimited_ c one xs
 
   where
     one (filename, key) = do
