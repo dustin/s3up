@@ -3,6 +3,8 @@
 
 module S3Up.DB where
 
+import           Amazonka                         (FromText, ToByteString (..), ToText (..), fromText)
+import           Amazonka.S3.Types                (BucketName (..), ETag (..), ObjectKey (..))
 import           Control.Monad.IO.Class           (MonadIO (..))
 import           Control.Monad.Reader             (ReaderT (..), ask, runReaderT)
 import qualified Data.ByteString                  as BS
@@ -16,8 +18,6 @@ import           Database.SQLite.Simple           hiding (bind, close)
 import           Database.SQLite.Simple.FromField
 import           Database.SQLite.Simple.Ok
 import           Database.SQLite.Simple.ToField
-import           Network.AWS.Data                 (FromText, ToByteString (..), ToText (..), fromText)
-import           Network.AWS.S3.Types             (BucketName (..), ETag (..), ObjectKey (..))
 
 import           S3Up.Types
 

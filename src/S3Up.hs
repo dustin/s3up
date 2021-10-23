@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
@@ -8,6 +9,14 @@
 
 module S3Up where
 
+import           Amazonka                     (Credentials (..), Region (..), RequestBody (Hashed), ToHashedBody (..),
+                                               _Time, newEnv, runResourceT, send)
+import qualified Amazonka                     as AWS
+import           Amazonka.S3                  (BucketName, ObjectKey, StorageClass, _LocationConstraint, _ObjectKey,
+                                               newAbortMultipartUpload, newCompleteMultipartUpload,
+                                               newCompletedMultipartUpload, newCompletedPart, newCreateMultipartUpload,
+                                               newGetBucketLocation, newListBuckets, newListMultipartUploads,
+                                               newUploadPart)
 import           Control.Applicative          (Alternative (..), (<|>))
 import           Control.Concurrent.QSem      (newQSem, signalQSem, waitQSem)
 import           Control.Lens
@@ -18,12 +27,12 @@ import           Control.Monad.IO.Class       (MonadIO (..))
 import           Control.Monad.Logger         (Loc (..), LogLevel (..), LogSource, LogStr, MonadLogger (..),
                                                ToLogStr (..), monadLoggerLog)
 import           Control.Monad.Reader         (MonadReader, ReaderT (..), asks)
-import           Control.Monad.Trans.AWS      (AWST', Credentials (..), envRegion, newEnv, runAWST, runResourceT, send)
 import           Control.Monad.Trans.Resource (ResourceT)
 import           Control.Retry                (RetryStatus (..), exponentialBackoff, limitRetries, recoverAll)
 import qualified Data.ByteString.Lazy         as BL
+import           Data.Generics.Product        (field)
 import           Data.List                    (sort)
-import           Data.List.NonEmpty           (NonEmpty(..))
+import           Data.List.NonEmpty           (NonEmpty (..))
 import           Data.Maybe                   (isJust)
 import           Data.String                  (fromString)
 import           Data.Text                    (Text)
@@ -31,9 +40,6 @@ import qualified Data.Text                    as T
 import           Data.Time.Clock              (UTCTime)
 import           Database.SQLite.Simple       (Connection, withConnection)
 import           GHC.Exts                     (IsList (..))
-import           Network.AWS.Data.Body        (RqBody (Hashed), ToHashedBody (..))
-import qualified Network.AWS.Env              as AWSE
-import           Network.AWS.S3
 import           System.FilePath.Posix        (takeFileName)
 import           System.IO                    (IOMode (..), SeekMode (..), hSeek, withFile)
 import           System.Posix.Files           (fileSize, getFileStatus)
@@ -109,21 +115,22 @@ mkObjectKey filename = (_ObjectKey %~ affix) . fromString
           | otherwise = p
 
 -- Run an action in any AWS location
-inAWS :: (MonadCatch m, MonadUnliftIO m) => AWST' AWSE.Env (ResourceT m) a -> m a
-inAWS a = newEnv Discover >>= \e -> (runResourceT . runAWST e) a
+
+inAWS :: (MonadCatch m, MonadUnliftIO m) => (AWS.Env -> ResourceT m a) -> m a
+inAWS a = newEnv Discover >>= runResourceT . a
 
 -- Run an action in the specified region
-inAWSRegion :: (MonadCatch m, MonadUnliftIO m) => Region -> AWST' AWSE.Env (ResourceT m) a -> m a
-inAWSRegion r a = (newEnv Discover <&> set envRegion r) >>= \awsenv -> (runResourceT . runAWST awsenv) a
+inAWSRegion :: (MonadCatch m, MonadUnliftIO m) => Region -> (AWS.Env  -> ResourceT m a) -> m a
+inAWSRegion r a = (newEnv Discover <&> set (field @"_envRegion") r) >>= runResourceT . a
 
 -- Run an action at the region appropriate for the given bucket
-inAWSBucket :: (MonadCatch m, MonadUnliftIO m) => BucketName -> AWST' AWSE.Env (ResourceT m) a -> m a
+inAWSBucket :: (MonadCatch m, MonadUnliftIO m) => BucketName -> (AWS.Env -> ResourceT m a) -> m a
 inAWSBucket b a = bucketRegion b >>= \r -> inAWSRegion r a
 
 -- Get the correct region for the given bucket
 bucketRegion :: (MonadCatch m, MonadUnliftIO m) => BucketName -> m Region
-bucketRegion b = view (gblbrsLocationConstraint . _LocationConstraint)
-                 <$> (inAWS . send $ getBucketLocation b)
+bucketRegion b = view (field @"locationConstraint" . _LocationConstraint)
+                 <$> (inAWS . flip send $ newGetBucketLocation b)
 
 createMultipart :: FilePath -> ObjectKey -> S3Up PartialUpload
 createMultipart fp key = do
@@ -131,9 +138,9 @@ createMultipart fp key = do
   b <- asks (optBucket . s3Options)
   cClass <- asks (optClass . s3Options)
   chunkSize <- asks (optChunkSize . s3Options)
-  up <- inAWSBucket b $ send $ createMultipartUpload b key & cmuStorageClass ?~ cClass
+  up <- inAWSBucket b $ flip send $ newCreateMultipartUpload b key & field @"storageClass" ?~ cClass
   let chunks = [1 .. ceiling @Double (fromIntegral fsize / fromIntegral chunkSize)]
-  DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. cmursUploadId . _Just) ((,Nothing) <$> chunks)
+  DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. field @"uploadId" . _Just) ((,Nothing) <$> chunks)
 
 completeStr :: PartialUpload -> String
 completeStr PartialUpload{..} = show perc <> "% of around " <> show mb <> " MB complete"
@@ -149,8 +156,8 @@ completeUpload pu@PartialUpload{..} = do
             " ", T.pack (completeStr pu)]
   finished <- fromList . sort <$> mapConcurrentlyLimited c (uc r) _pu_parts
   logInfoL ["Completed all parts of ", tshow _pu_filename, " to ", tshow _pu_bucket, ":", tshow _pu_key]
-  let completed = completedMultipartUpload & cmuParts ?~ (uncurry completedPart <$> finished)
-  inAWSRegion r $ void . send $ completeMultipartUpload _pu_bucket _pu_key _pu_upid & cMultipartUpload ?~ completed
+  let completed = newCompletedMultipartUpload & field @"parts" ?~ (uncurry newCompletedPart <$> finished)
+  inAWSRegion r $ \env -> void . send env $ newCompleteMultipartUpload _pu_bucket _pu_key _pu_upid & field @"multipartUpload" ?~ completed
   DB.completedUpload _pu_id
 
   where
@@ -161,7 +168,7 @@ completeUpload pu@PartialUpload{..} = do
         Hashed . toHashed <$> BL.hGet fh (fromIntegral _pu_chunkSize)
       Just etag <- recoverAll policy $ \rs -> do
         logDbgL ["uploading chunk ", tshow n, " ", tshow body, " attempt ", tshow (rsIterNumber rs)]
-        view uprsETag <$> inAWSRegion r (send $ uploadPart _pu_bucket _pu_key n _pu_upid body)
+        view (field @"eTag") <$> inAWSRegion r (flip send $ newUploadPart _pu_bucket _pu_key n _pu_upid body)
       DB.completedUploadPart _pu_id n etag
       logDbgL ["finished chunk ", tshow n, " ", tshow body, " as ", tshow etag]
       pure (n, etag)
@@ -170,18 +177,18 @@ completeUpload pu@PartialUpload{..} = do
 
 listMultiparts :: BucketName -> S3Up [(UTCTime, ObjectKey, Text)]
 listMultiparts b = do
-  ups <- inAWSBucket b $ send $ listMultipartUploads b
-  pure $ ups ^.. lmursUploads . folded . to (\u -> (u ^?! muInitiated . _Just,
-                                                    u ^?! muKey . _Just,
-                                                    u ^. muUploadId . _Just))
+  ups <- inAWSBucket b . flip send $ newListMultipartUploads b
+  pure $ ups ^.. field @"uploads" . folded . folded . to (\u -> (u ^?! field @"initiated" . _Just . _Time,
+                                                                 u ^?! field @"key" . _Just,
+                                                                 u ^. field @"uploadId" . _Just))
 
 allBuckets :: S3Up [BucketName]
-allBuckets = toListOf (lbrsBuckets . folded . bName) <$> (inAWS . send $ listBuckets)
+allBuckets = toListOf (field @"buckets" . folded . folded . field @"name") <$> inAWS (`send` newListBuckets)
 
 abortUpload :: ObjectKey -> S3UploadID -> S3Up ()
 abortUpload k u = do
   b <- asks (optBucket . s3Options)
-  inAWSBucket b $ void . send $ abortMultipartUpload b k u
+  inAWSBucket b $ \env -> void . send env $ newAbortMultipartUpload b k u
   DB.abortedUpload u
 
 runIO :: Env -> S3Up a -> IO a

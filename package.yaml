@@ -21,7 +21,7 @@ description:         Please see the README on GitHub at <https://github.com/dust
 
 dependencies:
 - base >= 4.7 && < 5
-- amazonka-s3 >= 1.6.1
+- amazonka-s3 >= 2.0
 - lens
 - optparse-applicative
 - conduit
@@ -32,8 +32,10 @@ dependencies:
 - transformers
 - async
 - unliftio
-- amazonka
-- amazonka-core
+- generic-lens
+- amazonka >= 2.0
+- amazonka-core >= 2.0
+- amazonka-s3 >= 2.0
 - stm
 - text
 - containers

@@ -3,6 +3,8 @@
 
 module Main where
 
+import           Amazonka                             (ToText (..))
+import           Amazonka.S3                          (ObjectKey (..), StorageClass (..))
 import           Control.Applicative                  ((<|>))
 import           Control.Monad                        (unless, when)
 import           Control.Monad.Catch                  (bracket_)
@@ -11,13 +13,11 @@ import           Control.Monad.Reader                 (asks)
 import           Data.Char                            (toLower)
 import           Data.Foldable                        (fold)
 import           Data.List                            (intercalate, sortOn)
-import           Data.List.NonEmpty                   (NonEmpty(..))
+import           Data.List.NonEmpty                   (NonEmpty (..))
 import qualified Data.List.NonEmpty                   as NE
 import qualified Data.Map.Strict                      as Map
 import           Data.Maybe                           (isNothing)
 import qualified Data.Text                            as T
-import           Network.AWS.Data.Text                (ToText (..))
-import           Network.AWS.S3                       (ObjectKey (..), StorageClass (..))
 import           Options.Applicative                  (Parser, ReadM, argument, auto, command, customExecParser,
                                                        eitherReader, fullDesc, help, helper, info, long, metavar,
                                                        option, prefs, progDesc, readerError, short, showDefault,
@@ -26,8 +26,8 @@ import           Options.Applicative                  (Parser, ReadM, argument, 
 import           Options.Applicative.Help.Levenshtein (editDistance)
 import           System.Directory                     (createDirectoryIfMissing, getHomeDirectory)
 import           System.FilePath.Posix                ((</>))
-import           System.IO                            (BufferMode (..), hFlush, hGetBuffering, hGetEcho,
-                                                       hSetBuffering, hSetEcho, stdin, stdout)
+import           System.IO                            (BufferMode (..), hFlush, hGetBuffering, hGetEcho, hSetBuffering,
+                                                       hSetEcho, stdin, stdout)
 import           UnliftIO                             (mapConcurrently)
 
 import           S3Up
@@ -45,7 +45,7 @@ options confdir = Options
   <*> option (atLeast (5*1024*1024)) (short 's' <> long "chunk-size" <> showDefault
                                       <> value (6 * 1024 * 1024) <> help "upload chunk size")
   <*> option sclass (short 'c' <> long "storage-class" <> showDefault
-                     <> value Standard <> help "storage class")
+                     <> value StorageClass_STANDARD <> help "storage class")
   <*> switch (short 'v' <> long "verbose" <> help "enable debug logging")
   <*> option (atLeast 1) (short 'u' <> long "upload-concurrency" <> showDefault
                           <> value 3 <> help "Upload concurrency")
@@ -61,10 +61,10 @@ options confdir = Options
 
     abort = Abort <$> argument str (metavar "objkey") <*> argument str (metavar "uploadID")
             <|> pure InteractiveAbort
-    classes = [("onezone-ia", OnezoneIA),
-               ("rr", ReducedRedundancy),
-               ("standard", Standard),
-               ("standard-ia", StandardIA)]
+    classes = [("onezone-ia", StorageClass_ONEZONE_IA),
+               ("rr", StorageClass_REDUCED_REDUNDANCY),
+               ("standard", StorageClass_STANDARD),
+               ("standard-ia", StorageClass_STANDARD_IA)]
     sclass = eitherReader $ \s -> maybe (Left (inv "StorageClass" s (fst <$> classes))) Right $ lookup s classes
 
     parseDests [] = Left "insufficient arguments"

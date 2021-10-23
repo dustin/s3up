@@ -1,7 +1,7 @@
 module S3Up.Types where
 
-import           Data.Text            (Text)
-import           Network.AWS.S3.Types (BucketName (..), ETag (..), ObjectKey (..))
+import           Amazonka.S3.Types (BucketName (..), ETag (..), ObjectKey (..))
+import           Data.Text         (Text)
 
 type UploadID = Int
 type S3UploadID = Text
