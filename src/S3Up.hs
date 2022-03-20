@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE UndecidableInstances       #-}
@@ -30,7 +31,7 @@ import           Control.Monad.Reader         (MonadReader, ReaderT (..), asks)
 import           Control.Monad.Trans.Resource (ResourceT)
 import           Control.Retry                (RetryStatus (..), exponentialBackoff, limitRetries, recoverAll)
 import qualified Data.ByteString.Lazy         as BL
-import           Data.Generics.Product        (field)
+import           Data.Generics.Labels         ()
 import           Data.List                    (sort)
 import           Data.List.NonEmpty           (NonEmpty (..))
 import           Data.Maybe                   (isJust)
@@ -121,7 +122,7 @@ inAWS a = newEnv Discover >>= runResourceT . a
 
 -- Run an action in the specified region
 inAWSRegion :: (MonadCatch m, MonadUnliftIO m) => Region -> (AWS.Env  -> ResourceT m a) -> m a
-inAWSRegion r a = (newEnv Discover <&> set (field @"_envRegion") r) >>= runResourceT . a
+inAWSRegion r a = (newEnv Discover <&> set #_envRegion r) >>= runResourceT . a
 
 -- Run an action at the region appropriate for the given bucket
 inAWSBucket :: (MonadCatch m, MonadUnliftIO m) => BucketName -> (AWS.Env -> ResourceT m a) -> m a
@@ -129,7 +130,7 @@ inAWSBucket b a = bucketRegion b >>= \r -> inAWSRegion r a
 
 -- Get the correct region for the given bucket
 bucketRegion :: (MonadCatch m, MonadUnliftIO m) => BucketName -> m Region
-bucketRegion b = view (field @"locationConstraint" . _LocationConstraint)
+bucketRegion b = view (#locationConstraint . _LocationConstraint)
                  <$> (inAWS . flip send $ newGetBucketLocation b)
 
 createMultipart :: FilePath -> ObjectKey -> S3Up PartialUpload
@@ -138,9 +139,9 @@ createMultipart fp key = do
   b <- asks (optBucket . s3Options)
   cClass <- asks (optClass . s3Options)
   chunkSize <- asks (optChunkSize . s3Options)
-  up <- inAWSBucket b $ flip send $ newCreateMultipartUpload b key & field @"storageClass" ?~ cClass
+  up <- inAWSBucket b $ flip send $ newCreateMultipartUpload b key & #storageClass ?~ cClass
   let chunks = [1 .. ceiling @Double (fromIntegral fsize / fromIntegral chunkSize)]
-  DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. field @"uploadId" . _Just) ((,Nothing) <$> chunks)
+  DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. #uploadId . _Just) ((,Nothing) <$> chunks)
 
 completeStr :: PartialUpload -> String
 completeStr PartialUpload{..} = show perc <> "% of around " <> show mb <> " MB complete"
@@ -156,8 +157,8 @@ completeUpload pu@PartialUpload{..} = do
             " ", T.pack (completeStr pu)]
   finished <- fromList . sort <$> mapConcurrentlyLimited c (uc r) _pu_parts
   logInfoL ["Completed all parts of ", tshow _pu_filename, " to ", tshow _pu_bucket, ":", tshow _pu_key]
-  let completed = newCompletedMultipartUpload & field @"parts" ?~ (uncurry newCompletedPart <$> finished)
-  inAWSRegion r $ \env -> void . send env $ newCompleteMultipartUpload _pu_bucket _pu_key _pu_upid & field @"multipartUpload" ?~ completed
+  let completed = newCompletedMultipartUpload & #parts ?~ (uncurry newCompletedPart <$> finished)
+  inAWSRegion r $ \env -> void . send env $ newCompleteMultipartUpload _pu_bucket _pu_key _pu_upid & #multipartUpload ?~ completed
   DB.completedUpload _pu_id
 
   where
@@ -168,7 +169,7 @@ completeUpload pu@PartialUpload{..} = do
         Hashed . toHashed <$> BL.hGet fh (fromIntegral _pu_chunkSize)
       Just etag <- recoverAll policy $ \rs -> do
         logDbgL ["uploading chunk ", tshow n, " ", tshow body, " attempt ", tshow (rsIterNumber rs)]
-        view (field @"eTag") <$> inAWSRegion r (flip send $ newUploadPart _pu_bucket _pu_key n _pu_upid body)
+        view #eTag <$> inAWSRegion r (flip send $ newUploadPart _pu_bucket _pu_key n _pu_upid body)
       DB.completedUploadPart _pu_id n etag
       logDbgL ["finished chunk ", tshow n, " ", tshow body, " as ", tshow etag]
       pure (n, etag)
@@ -178,12 +179,12 @@ completeUpload pu@PartialUpload{..} = do
 listMultiparts :: BucketName -> S3Up [(UTCTime, ObjectKey, Text)]
 listMultiparts b = do
   ups <- inAWSBucket b . flip send $ newListMultipartUploads b
-  pure $ ups ^.. field @"uploads" . folded . folded . to (\u -> (u ^?! field @"initiated" . _Just . _Time,
-                                                                 u ^?! field @"key" . _Just,
-                                                                 u ^. field @"uploadId" . _Just))
+  pure $ ups ^.. #uploads . folded . folded . to (\u -> (u ^?! #initiated . _Just . _Time,
+                                                                 u ^?! #key . _Just,
+                                                                 u ^. #uploadId . _Just))
 
 allBuckets :: S3Up [BucketName]
-allBuckets = toListOf (field @"buckets" . folded . folded . field @"name") <$> inAWS (`send` newListBuckets)
+allBuckets = toListOf (#buckets . folded . folded . #name) <$> inAWS (`send` newListBuckets)
 
 abortUpload :: ObjectKey -> S3UploadID -> S3Up ()
 abortUpload k u = do
