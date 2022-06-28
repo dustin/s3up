@@ -163,7 +163,7 @@ completeUpload pu@PartialUpload{..} = do
   inAWSRegion r $ \env -> void . send env $ newCompleteMultipartUpload _pu_bucket _pu_key _pu_upid & #multipartUpload ?~ completed
   DB.completedUpload _pu_id
   when (_pu_hook == DeleteFile) $ do
-    logInfoL ["Deleting", tshow _pu_filename]
+    logInfoL ["Deleting ", tshow _pu_filename]
     liftIO $ removeFile _pu_filename
 
   where
