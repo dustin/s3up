@@ -13,11 +13,13 @@ import           Data.List                        (sortOn)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                       (isNothing)
 import           Data.String                      (fromString)
+import qualified Data.Text                        as T
 import           Data.Typeable                    (Typeable)
 import           Database.SQLite.Simple           hiding (bind, close)
 import           Database.SQLite.Simple.FromField
 import           Database.SQLite.Simple.Ok
 import           Database.SQLite.Simple.ToField
+import           Text.Read                        (readMaybe)
 
 import           S3Up.Types
 
@@ -37,6 +39,7 @@ instance FromRow PartialUpload where
     <*> field -- filename
     <*> field -- key
     <*> field -- upid
+    <*> field -- hook
     <*> pure []
 
 textField :: (Typeable a, FromText a) => Field -> Ok a
@@ -58,10 +61,18 @@ instance FromField BucketName where fromField = textField
 instance ToField ETag where toField = toField . toBS
 instance FromField ETag where fromField = blobField ETag
 
+instance ToField PostUploadHook where toField = toField . show
+
+instance FromField PostUploadHook where
+  fromField f = case fieldData f of
+                  (SQLText t) -> maybe (returnError ConversionFailed f ("could not parse " <> show t)) Ok (readMaybe (T.unpack t))
+                  _ -> returnError ConversionFailed f "invalid type"
+
 initQueries :: [(Int, Query)]
 initQueries = [
   (1, "create table if not exists uploads (id integer primary key autoincrement, chunk_size, bucket_name, filename, key, upid)"),
-  (1, "create table if not exists upload_parts (id integer, part integer, etag)")
+  (1, "create table if not exists upload_parts (id integer, part integer, etag)"),
+  (2, "alter table uploads add column post_upload string")
   ]
 
 initTables :: Connection -> IO ()
@@ -75,8 +86,8 @@ storeUpload :: (HasS3UpDB m, MonadIO m) => PartialUpload -> m PartialUpload
 storeUpload pu@PartialUpload{..} = liftIO . ins =<< s3UpDB
   where
     ins db = withTransaction db $ do
-      execute db "insert into uploads (chunk_size, bucket_name, filename, key, upid) values (?,?,?,?,?)" (
-        _pu_chunkSize, _pu_bucket, _pu_filename, _pu_key, _pu_upid)
+      execute db "insert into uploads (chunk_size, bucket_name, filename, key, upid, post_upload) values (?,?,?,?,?,?)" (
+        _pu_chunkSize, _pu_bucket, _pu_filename, _pu_key, _pu_upid, _pu_hook)
       pid <- fromIntegral <$> lastInsertRowId db
       let vals = [(pid, fst i) | i <- _pu_parts]
       executeMany db "insert into upload_parts (id, part) values (?,?)" vals
@@ -106,7 +117,7 @@ listPartialUploads = liftIO . sel =<< s3UpDB
       segs <- Map.fromListWith (<>) . fmap (\(i,p,e) -> (i, [(p,e)])) <$> query_ db "select id, part, etag from upload_parts"
       sortOn (length . filter (isNothing . snd) . _pu_parts) .
         map (\p@PartialUpload{..} -> p{_pu_parts=Map.findWithDefault [] _pu_id segs})
-        <$> query_ db "select id, chunk_size, bucket_name, filename, key, upid from uploads"
+        <$> query_ db "select id, chunk_size, bucket_name, filename, key, upid, post_upload from uploads"
 
 listQueuedFiles :: (HasS3UpDB m, MonadIO m) => m [FilePath]
 listQueuedFiles = liftIO . coerce . sel =<< s3UpDB

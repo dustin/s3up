@@ -21,7 +21,7 @@ import           Amazonka.S3                  (BucketName, ObjectKey, StorageCla
 import           Control.Applicative          (Alternative (..), (<|>))
 import           Control.Concurrent.QSem      (newQSem, signalQSem, waitQSem)
 import           Control.Lens
-import           Control.Monad                (MonadPlus (..), mzero, void)
+import           Control.Monad                (MonadPlus (..), mzero, void, when)
 import           Control.Monad.Catch          (MonadCatch (..), MonadMask (..), MonadThrow (..), SomeException (..),
                                                bracket_, catch)
 import           Control.Monad.IO.Class       (MonadIO (..))
@@ -41,6 +41,7 @@ import qualified Data.Text                    as T
 import           Data.Time.Clock              (UTCTime)
 import           Database.SQLite.Simple       (Connection, withConnection)
 import           GHC.Exts                     (IsList (..))
+import           System.Directory             (removeFile)
 import           System.FilePath.Posix        (takeFileName)
 import           System.IO                    (IOMode (..), SeekMode (..), hSeek, withFile)
 import           System.Posix.Files           (fileSize, getFileStatus)
@@ -65,6 +66,7 @@ data Options = Options {
   optVerbose           :: Bool,
   optConcurrency       :: Int,
   optCreateConcurrency :: Int,
+  optHook              :: PostUploadHook,
   optCommand           :: Command
   } deriving Show
 
@@ -133,15 +135,15 @@ bucketRegion :: (MonadCatch m, MonadUnliftIO m) => BucketName -> m Region
 bucketRegion b = view (#locationConstraint . _LocationConstraint)
                  <$> (inAWS . flip send $ newGetBucketLocation b)
 
-createMultipart :: FilePath -> ObjectKey -> S3Up PartialUpload
-createMultipart fp key = do
+createMultipart :: PostUploadHook -> FilePath -> ObjectKey -> S3Up PartialUpload
+createMultipart hook fp key = do
   fsize <- toInteger . fileSize <$> (liftIO . getFileStatus) fp
   b <- asks (optBucket . s3Options)
   cClass <- asks (optClass . s3Options)
   chunkSize <- asks (optChunkSize . s3Options)
   up <- inAWSBucket b $ flip send $ newCreateMultipartUpload b key & #storageClass ?~ cClass
   let chunks = [1 .. ceiling @Double (fromIntegral fsize / fromIntegral chunkSize)]
-  DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. #uploadId . _Just) ((,Nothing) <$> chunks)
+  DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. #uploadId . _Just) hook ((,Nothing) <$> chunks)
 
 completeStr :: PartialUpload -> String
 completeStr PartialUpload{..} = show perc <> "% of around " <> show mb <> " MB complete"
@@ -160,6 +162,9 @@ completeUpload pu@PartialUpload{..} = do
   let completed = newCompletedMultipartUpload & #parts ?~ (uncurry newCompletedPart <$> finished)
   inAWSRegion r $ \env -> void . send env $ newCompleteMultipartUpload _pu_bucket _pu_key _pu_upid & #multipartUpload ?~ completed
   DB.completedUpload _pu_id
+  when (_pu_hook == DeleteFile) $ do
+    logInfoL ["Deleting", tshow _pu_filename]
+    liftIO $ removeFile _pu_filename
 
   where
     uc _ (n,Just e) = pure (n,e)

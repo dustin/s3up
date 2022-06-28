@@ -51,6 +51,8 @@ options confdir = Options
                           <> value 3 <> help "Upload concurrency")
   <*> option (atLeast 1) (long "create-concurrency" <> showDefault
                           <> value 1 <> help "Create concurrency")
+  <*> option hook (long "post-upload-hook"
+                          <> value KeepFile <> help "Hook to run after upload completes (keep | delete)")
   <*> subparser ( command "create" (info create (progDesc "Create a new upload"))
                   <> command "upload" (info (pure Upload) (progDesc "Upload outstanding data"))
                   <> command "list" (info (pure List) (progDesc "List current uploads"))
@@ -66,6 +68,9 @@ options confdir = Options
                ("standard", StorageClass_STANDARD),
                ("standard-ia", StorageClass_STANDARD_IA)]
     sclass = eitherReader $ \s -> maybe (Left (inv "StorageClass" s (fst <$> classes))) Right $ lookup s classes
+
+    hooks = [("keep", KeepFile), ("delete", DeleteFile)]
+    hook = eitherReader $ \s -> maybe (Left (inv "upload hook" s (fst <$> hooks))) Right $ lookup s hooks
 
     parseDests [] = Left "insufficient arguments"
     parseDests [_] = Left "insufficient arguments"
@@ -90,11 +95,12 @@ runCreate :: Either String (NonEmpty (FilePath, ObjectKey)) -> S3Up ()
 runCreate (Left e) = logErrorL ["Invalid paths for create: ", T.pack e]
 runCreate (Right xs) = do
   c <- asks (optCreateConcurrency . s3Options)
-  mapConcurrentlyLimited_ c one xs
+  hook <- asks (optHook . s3Options)
+  mapConcurrentlyLimited_ c (one hook) xs
 
   where
-    one (filename, key) = do
-      PartialUpload{..} <- createMultipart filename key
+    one hook (filename, key) = do
+      PartialUpload{..} <- createMultipart hook filename key
       logDbgL ["Created upload for ", tshow _pu_bucket, ":", tshow _pu_key, " in ",
                tshow (length _pu_parts), " parts as ", _pu_upid]
       logInfo "Upload created.  Use the 'upload' command to complete."
