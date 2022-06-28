@@ -20,7 +20,7 @@ extra-source-files:
 description:         Please see the README on GitHub at <https://github.com/dustin/s3up#readme>
 
 dependencies:
-- base >= 4.7 && < 5
+- base
 - amazonka-s3 >= 2.0
 - lens
 - optparse-applicative
@@ -48,6 +48,8 @@ dependencies:
 - filepath
 - time
 - retry
+- unliftio-core
+- network
 
 library:
   source-dirs: src

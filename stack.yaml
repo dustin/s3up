@@ -17,7 +17,7 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-resolver: lts-18.18
+resolver: lts-19.13
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -40,7 +40,6 @@ packages:
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
 extra-deps:
-- unliftio-core-0.1.2.0@sha256:b0a7652ffce2284a6cebe05c99eb60573a8fb6631163f34b0b30a80b4a78cb23,1081
 - github: brendanhay/amazonka
   commit: 0ccede621e56fb6f240e4850e205cde82d0e4a4b
   subdirs:
@@ -48,7 +47,6 @@ extra-deps:
   - lib/amazonka-core
   - lib/services/amazonka-s3
   - lib/services/amazonka-sts
-- network-3.1.2.5@sha256:433a5e076aaa8eb3e4158abae78fb409c6bd754e9af99bc2e87583d2bcd8404a,4888
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
