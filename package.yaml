@@ -88,3 +88,4 @@ tests:
     - tasty-hunit
     - tasty-quickcheck
     - tasty-discover
+    - QuickCheck

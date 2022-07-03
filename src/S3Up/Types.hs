@@ -9,7 +9,7 @@ type S3UploadID = Text
 data PostUploadHook
   = KeepFile
   | DeleteFile
-  deriving (Show, Read, Eq)
+  deriving (Show, Read, Eq, Bounded, Enum)
 
 data PartialUpload = PartialUpload
   { _pu_id        :: UploadID
@@ -20,4 +20,4 @@ data PartialUpload = PartialUpload
   , _pu_upid      :: S3UploadID
   , _pu_hook      :: PostUploadHook
   , _pu_parts     :: [(Int, Maybe ETag)]
-  } deriving Show
+  } deriving (Show, Eq)
