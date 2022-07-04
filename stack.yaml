@@ -41,7 +41,7 @@ packages:
 #
 extra-deps:
 - github: brendanhay/amazonka
-  commit: 0ccede621e56fb6f240e4850e205cde82d0e4a4b
+  commit: e64638ae16dc6d549d6e7c21262245e29761ede7
   subdirs:
   - lib/amazonka
   - lib/amazonka-core
