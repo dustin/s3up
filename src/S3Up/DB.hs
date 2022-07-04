@@ -1,7 +1,16 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module S3Up.DB where
+module S3Up.DB (
+  HasS3UpDB(..),
+  withDB,
+  initTables,
+  storeUpload,
+  completedUploadPart,
+  completedUpload,
+  abortedUpload,
+  listPartialUploads,
+  listQueuedFiles) where
 
 import           Amazonka                         (FromText, ToByteString (..), ToText (..), fromText)
 import           Amazonka.S3.Types                (BucketName (..), ETag (..), ObjectKey (..))
@@ -82,45 +91,65 @@ initTables db = do
   -- binding doesn't work on this for some reason.  It's safe, at least.
   execute_ db $ "pragma user_version = " <> (fromString . show . maximum . fmap fst $ initQueries)
 
-storeUpload :: (HasS3UpDB m, MonadIO m) => PartialUpload -> m PartialUpload
-storeUpload pu@PartialUpload{..} = liftIO . ins =<< s3UpDB
+-- A simple query.
+q_ :: (HasS3UpDB m, MonadIO m, FromRow r) => Query -> m [r]
+q_ q = liftIO . flip query_ q =<< s3UpDB
+
+-- A query that returns only a single column.
+oq_ :: (HasS3UpDB m, MonadIO m, FromField r) => Query -> m [r]
+oq_ q = unonly <$> q_ q
   where
-    ins db = withTransaction db $ do
-      execute db "insert into uploads (chunk_size, bucket_name, filename, key, upid, post_upload) values (?,?,?,?,?,?)" (
-        _pu_chunkSize, _pu_bucket, _pu_filename, _pu_key, _pu_upid, _pu_hook)
-      pid <- fromIntegral <$> lastInsertRowId db
-      let vals = [(pid, fst i) | i <- _pu_parts]
-      executeMany db "insert into upload_parts (id, part) values (?,?)" vals
-      pure pu{_pu_id=pid}
+    unonly :: [Only a] -> [a]
+    unonly = coerce
+
+-- execute many
+em :: (HasS3UpDB m, MonadIO m, ToRow r) => Query -> [r] -> m ()
+em q rs = s3UpDB >>= \db -> liftIO $ executeMany db q rs
+
+-- execute
+ex :: (HasS3UpDB m, MonadIO m, ToRow r) => Query -> r -> m ()
+ex q r = s3UpDB >>= \db -> liftIO $ execute db q r
+
+-- execute_
+ex_ :: (HasS3UpDB m, MonadIO m) => Query -> m ()
+ex_ q = s3UpDB >>= \db -> liftIO $ execute_ db q
+
+-- tx :: (HasS3UpDB m1, MonadIO m1, HasS3UpDB m2, MonadIO m2) => m1 a -> m2 a
+tx :: (HasS3UpDB m, MonadIO m) => ReaderT Connection IO b -> m b
+tx a = s3UpDB >>= \db -> liftIO $ withTransaction db (withDB db a)
+
+storeUpload :: (HasS3UpDB m, MonadIO m) => PartialUpload -> m PartialUpload
+storeUpload pu@PartialUpload{..} = tx $ do
+  ex "insert into uploads (chunk_size, bucket_name, filename, key, upid, post_upload) values (?,?,?,?,?,?)" (
+    _pu_chunkSize, _pu_bucket, _pu_filename, _pu_key, _pu_upid, _pu_hook)
+  pid <- fromIntegral <$> lid
+  let vals = [(pid, fst i) | i <- _pu_parts]
+  em "insert into upload_parts (id, part) values (?,?)" vals
+  pure pu{_pu_id=pid}
+
+  where
+    lid = s3UpDB >>= liftIO . lastInsertRowId
 
 completedUploadPart :: (HasS3UpDB m, MonadIO m) => UploadID -> Int -> ETag -> m ()
-completedUploadPart i p e = liftIO . up =<< s3UpDB
-  where up db = execute db "update upload_parts set etag = ? where id = ? and part = ?" (e, i, p)
+completedUploadPart i p e = ex "update upload_parts set etag = ? where id = ? and part = ?" (e, i, p)
 
 completedUpload :: (HasS3UpDB m, MonadIO m) => UploadID -> m ()
-completedUpload i = liftIO . up =<< s3UpDB
-  where up db = withTransaction db $ do
-          execute db "delete from upload_parts where id = ?" (Only i)
-          execute db "delete from uploads where id = ?" (Only i)
+completedUpload i = tx $ do
+  ex "delete from upload_parts where id = ?" (Only i)
+  ex "delete from uploads where id = ?" (Only i)
 
 abortedUpload :: (HasS3UpDB m, MonadIO m) => S3UploadID -> m ()
-abortedUpload i = liftIO . up =<< s3UpDB
-  where up db = withTransaction db $ do
-          execute db "delete from uploads where upid = ?" (Only i)
-          execute_ db "delete from upload_parts where id not in (select id from uploads)"
+abortedUpload i = tx $ do
+  ex "delete from uploads where upid = ?" (Only i)
+  ex_ "delete from upload_parts where id not in (select id from uploads)"
 
 -- Return in order of least work to do.
 listPartialUploads :: (HasS3UpDB m, MonadIO m) => m [PartialUpload]
-listPartialUploads = liftIO . sel =<< s3UpDB
-  where
-    sel db = do
-      segs <- Map.fromListWith (<>) . fmap (\(i,p,e) -> (i, [(p,e)])) <$> query_ db "select id, part, etag from upload_parts"
-      sortOn (length . filter (isNothing . snd) . _pu_parts) .
-        map (\p@PartialUpload{..} -> p{_pu_parts=Map.findWithDefault [] _pu_id segs})
-        <$> query_ db "select id, chunk_size, bucket_name, filename, key, upid, post_upload from uploads"
+listPartialUploads = do
+  segs <- Map.fromListWith (<>) . fmap (\(i,p,e) -> (i, [(p,e)])) <$> q_ "select id, part, etag from upload_parts"
+  sortOn (length . filter (isNothing . snd) . _pu_parts) .
+    map (\p@PartialUpload{..} -> p{_pu_parts=Map.findWithDefault [] _pu_id segs})
+    <$> q_ "select id, chunk_size, bucket_name, filename, key, upid, post_upload from uploads"
 
 listQueuedFiles :: (HasS3UpDB m, MonadIO m) => m [FilePath]
-listQueuedFiles = liftIO . coerce . sel =<< s3UpDB
-  where
-    sel :: Connection -> IO [Only FilePath]
-    sel db = query_ db "select filename from uploads"
+listQueuedFiles = oq_ "select filename from uploads"
