@@ -7,7 +7,7 @@ import           Amazonka                             (ToText (..))
 import           Amazonka.S3                          (ObjectKey (..), StorageClass (..))
 import           Control.Applicative                  ((<|>))
 import           Control.Monad                        (unless, when)
-import           Control.Monad.Catch                  (bracket_)
+import           Control.Monad.Catch                  (SomeException (..), bracket_, catch)
 import           Control.Monad.IO.Class               (MonadIO (..))
 import           Control.Monad.Reader                 (asks)
 import           Data.Char                            (toLower)
@@ -121,7 +121,11 @@ runList = do
   mapM_ (printBucket local) =<< mapConcurrently (\b -> (b,) <$> tryList b) =<< allBuckets
   where
     pl = liftIO . putStrLn . fold
-    tryList b = listMultiparts b <|> (logErrorL ["Failed loading multiparts from ", tshow b] >> pure [])
+    tryList b = listMultiparts b `catch` listErr
+      where
+        listErr (SomeException e) = do
+          logErrorL ["Failed loading multiparts from ", tshow b, ": ", tshow e]
+          pure []
     printBucket _ (_,[]) = pure ()
     printBucket m (b,xs) = pl ["In bucket: ", T.unpack (toText b)] >> mapM_ printRemote xs
       where
