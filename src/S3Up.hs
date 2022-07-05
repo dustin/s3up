@@ -21,7 +21,8 @@ import           Amazonka.S3                  (BucketName, ObjectKey, StorageCla
 import           Control.Concurrent.QSem      (newQSem, signalQSem, waitQSem)
 import           Control.Lens
 import           Control.Monad                (void, when)
-import           Control.Monad.Catch          (MonadCatch (..), MonadMask (..), MonadThrow (..), bracket_)
+import           Control.Monad.Catch          (Exception (..), MonadCatch (..), MonadMask (..), MonadThrow (..),
+                                               bracket_)
 import           Control.Monad.IO.Class       (MonadIO (..))
 import           Control.Monad.Logger         (Loc (..), LogLevel (..), LogSource, LogStr, MonadLogger (..),
                                                ToLogStr (..), monadLoggerLog)
@@ -29,6 +30,7 @@ import           Control.Monad.Reader         (MonadReader, ReaderT (..), asks)
 import           Control.Monad.Trans.Resource (ResourceT)
 import           Control.Retry                (RetryStatus (..), exponentialBackoff, limitRetries, recoverAll)
 import qualified Data.ByteString.Lazy         as BL
+import           Data.Foldable                (fold)
 import           Data.Generics.Labels         ()
 import           Data.List                    (sort)
 import           Data.List.NonEmpty           (NonEmpty (..))
@@ -43,7 +45,7 @@ import           System.Directory             (removeFile)
 import           System.FilePath.Posix        (takeFileName)
 import           System.IO                    (IOMode (..), SeekMode (..), hSeek, withFile)
 import           System.Posix.Files           (fileSize, getFileStatus)
-import           UnliftIO                     (MonadUnliftIO (..), mapConcurrently, mapConcurrently_)
+import           UnliftIO                     (MonadUnliftIO (..), mapConcurrently, mapConcurrently_, throwIO)
 
 import qualified S3Up.DB                      as DB
 import           S3Up.Logging
@@ -126,14 +128,28 @@ bucketRegion :: (MonadCatch m, MonadUnliftIO m) => BucketName -> m Region
 bucketRegion b = view (#locationConstraint . _LocationConstraint)
                  <$> (inAWS . flip send $ newGetBucketLocation b)
 
+calcMinSize :: Int -> Int
+calcMinSize fsize = max (5*mb) (ceiling @Double (fromIntegral fsize / 10000))
+  where
+    mb = 1024 * 1024
+
+data ETooBig = ETooBig Int Int
+
+instance Show ETooBig where
+  show (ETooBig fs cs) = fold ["This file would have too many chunks: ",show cs, " (max is 10,000).  ",
+                         "Try using a chunk size of ", show (calcMinSize fs)]
+
+instance Exception ETooBig
+
 createMultipart :: PostUploadHook -> FilePath -> ObjectKey -> S3Up PartialUpload
 createMultipart hook fp key = do
   fsize <- toInteger . fileSize <$> (liftIO . getFileStatus) fp
   b <- asks (optBucket . s3Options)
   cClass <- asks (optClass . s3Options)
   chunkSize <- asks (optChunkSize . s3Options)
-  up <- inAWSBucket b $ flip send $ newCreateMultipartUpload b key & #storageClass ?~ cClass
   let chunks = [1 .. ceiling @Double (fromIntegral fsize / fromIntegral chunkSize)]
+  when (length chunks > 10000) $ throwIO (ETooBig (fromIntegral fsize) (length chunks))
+  up <- inAWSBucket b $ flip send $ newCreateMultipartUpload b key & #storageClass ?~ cClass
   DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. #uploadId . _Just) hook ((,Nothing) <$> chunks)
 
 completeStr :: PartialUpload -> String
