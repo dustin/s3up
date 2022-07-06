@@ -11,12 +11,13 @@ import           Control.Monad.Catch                  (SomeException (..), brack
 import           Control.Monad.IO.Class               (MonadIO (..))
 import           Control.Monad.Reader                 (asks)
 import           Data.Char                            (toLower)
-import           Data.Foldable                        (fold)
-import           Data.List                            (intercalate, sortOn)
+import           Data.Foldable                        (fold, traverse_)
+import           Data.List                            (intercalate, partition, sortOn)
 import           Data.List.NonEmpty                   (NonEmpty (..))
 import qualified Data.List.NonEmpty                   as NE
 import qualified Data.Map.Strict                      as Map
 import           Data.Maybe                           (isNothing)
+import qualified Data.Set                             as Set
 import qualified Data.Text                            as T
 import           Options.Applicative                  (Parser, ReadM, argument, auto, command, customExecParser,
                                                        eitherReader, fullDesc, help, helper, info, long, metavar,
@@ -94,9 +95,13 @@ some1 p = NE.fromList <$> some p
 runCreate :: Either String (NonEmpty (FilePath, ObjectKey)) -> S3Up ()
 runCreate (Left e) = logErrorL ["Invalid paths for create: ", T.pack e]
 runCreate (Right xs) = do
+  bn <- asks (optBucket . s3Options)
+  inflight <- Set.fromList . fmap (\(_,b,k) -> (b,k)) <$> DB.listQueuedFiles
+  let (doing, todo) = partition (\(_,k) -> (bn,k) `Set.member` inflight) (NE.toList xs)
+  traverse_ (\(fp,ok) -> logInfoL ["Skipping in-flight upload of ", tshow fp, " -> ", tshow ok]) doing
   c <- asks (optCreateConcurrency . s3Options)
   hook <- asks (optHook . s3Options)
-  mapConcurrentlyLimited_ c (one hook) xs
+  mapConcurrentlyLimited_ c (one hook) todo
 
   where
     one hook (filename, key) = do

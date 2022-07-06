@@ -1,6 +1,7 @@
 module DBSpec where
 
 import           Control.Monad.Reader   (ReaderT (..))
+import           Data.Foldable          (traverse_)
 import           Data.List              (sort)
 import           Data.Maybe             (listToMaybe)
 import           Data.String
@@ -9,7 +10,6 @@ import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck  as QC
-import Data.Foldable (traverse_)
 
 import           S3Up.DB
 import           S3Up.Types
@@ -67,4 +67,4 @@ prop_completeUpload pu (CompletionLevel cl) = ioProperty $ do
 prop_listFiles :: [PartialUpload] -> Property
 prop_listFiles pups = ioProperty $ do
   files <- runDB (traverse_ storeUpload pups *> listQueuedFiles)
-  pure (sort files === sort [_pu_filename p | p <- pups])
+  pure (sort files === sort [(_pu_filename p, _pu_bucket p, _pu_key p) | p <- pups])

@@ -17,7 +17,6 @@ import           Amazonka.S3.Types                (BucketName (..), ETag (..), O
 import           Control.Monad.IO.Class           (MonadIO (..))
 import           Control.Monad.Reader             (ReaderT (..), ask, runReaderT)
 import qualified Data.ByteString                  as BS
-import           Data.Coerce                      (coerce)
 import           Data.List                        (sortOn)
 import qualified Data.Map.Strict                  as Map
 import           Data.Maybe                       (isNothing)
@@ -95,13 +94,6 @@ initTables db = do
 q_ :: (HasS3UpDB m, MonadIO m, FromRow r) => Query -> m [r]
 q_ q = liftIO . flip query_ q =<< s3UpDB
 
--- A query that returns only a single column.
-oq_ :: (HasS3UpDB m, MonadIO m, FromField r) => Query -> m [r]
-oq_ q = unonly <$> q_ q
-  where
-    unonly :: [Only a] -> [a]
-    unonly = coerce
-
 -- execute many
 em :: (HasS3UpDB m, MonadIO m, ToRow r) => Query -> [r] -> m ()
 em q rs = s3UpDB >>= \db -> liftIO $ executeMany db q rs
@@ -151,5 +143,5 @@ listPartialUploads = do
     map (\p@PartialUpload{..} -> p{_pu_parts=Map.findWithDefault [] _pu_id segs})
     <$> q_ "select id, chunk_size, bucket_name, filename, key, upid, post_upload from uploads"
 
-listQueuedFiles :: (HasS3UpDB m, MonadIO m) => m [FilePath]
-listQueuedFiles = oq_ "select filename from uploads"
+listQueuedFiles :: (HasS3UpDB m, MonadIO m) => m [(FilePath, BucketName, ObjectKey)]
+listQueuedFiles = q_ "select filename, bucket_name, key from uploads"
