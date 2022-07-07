@@ -72,7 +72,6 @@ data Options = Options {
 
 data Env = Env
     { s3Options :: Options
-    , s3Region  :: Region
     , dbConn    :: Connection
     , envLogger :: Loc -> LogSource -> LogLevel -> LogStr -> IO ()
     }
@@ -211,4 +210,4 @@ runWithOptions :: Options -> S3Up a -> IO a
 runWithOptions o@Options{..} a = withConnection optDBPath $ \db -> do
   DB.initTables db
   let minLvl = if optVerbose then LevelDebug else LevelInfo
-  liftIO $ runIO (Env o NorthVirginia db (baseLogger minLvl)) a
+  liftIO $ runIO (Env o db (baseLogger minLvl)) a
