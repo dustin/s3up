@@ -122,7 +122,7 @@ runUpload = do
 
 runList :: S3Up ()
 runList = do
-  local <- Map.fromList . fmap (\pu@PartialUpload{..} -> ((_pu_bucket, _pu_upid), completeStr pu)) <$> DB.listPartialUploads
+  local <- Map.fromList . fmap (\pu@PartialUpload{..} -> ((_pu_bucket, _pu_upid), pu)) <$> DB.listPartialUploads
   mapM_ (printBucket local) =<< mapConcurrently (\b -> (b,) <$> tryList b) =<< allBuckets
   where
     pl = liftIO . putStrLn . fold
@@ -134,11 +134,15 @@ runList = do
     printBucket _ (_,[]) = pure ()
     printBucket m (b,xs) = pl ["In bucket: ", T.unpack (toText b)] >> mapM_ printRemote xs
       where
-        printRemote (t,k,i) = pl ["- ", show t,
-                                  "\n  ", scomp m (b,i),
-                                  "\n  ", show k,
-                                  "\n  ID: ", show i]
-    scomp m i = Map.findWithDefault "(unmanaged)" i m
+        printRemote (t,k,i) = pl (["- ", show t,
+                                  "\n  ", (maybe "(unmanaged)" completeStr $ Map.lookup (b,i) m),
+                                  "\n  ", show k]
+                                  <> (maybe [] localParts (Map.lookup (b,i) m))
+                                  <> ["\n  ID: ", show i])
+    localParts PartialUpload{..} = [
+      "\n  ", _pu_filename,
+      "\n  hook: ", show _pu_hook
+      ]
 
 prompt :: MonadIO m => String -> m Bool
 prompt s = liftIO (putStr s >> hFlush stdout >> bufd wait)
