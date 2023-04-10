@@ -2,3 +2,5 @@
 s3up.cabal
 *~
 /s3up.db
+.direnv
+.DS_Store
