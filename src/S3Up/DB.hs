@@ -12,7 +12,8 @@ module S3Up.DB (
   listPartialUploads,
   listQueuedFiles) where
 
-import           Amazonka                         (FromText, ToByteString (..), ToText (..), fromText)
+import           Amazonka.Data.ByteString         (ToByteString (..))
+import           Amazonka.Data.Text               (FromText, ToText (..), fromText)
 import           Amazonka.S3.Types                (BucketName (..), ETag (..), ObjectKey (..))
 import           Control.Monad.IO.Class           (MonadIO (..))
 import           Control.Monad.Reader             (ReaderT (..), ask, runReaderT)

@@ -3,7 +3,7 @@
 
 module Main where
 
-import           Amazonka                             (ToText (..))
+import           Amazonka.Data.Text                   (ToText (..))
 import           Amazonka.S3                          (ObjectKey (..), StorageClass (..))
 import           Control.Applicative                  ((<|>))
 import           Control.Monad                        (unless, when)

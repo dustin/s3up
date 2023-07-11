@@ -10,9 +10,10 @@
 
 module S3Up where
 
-import           Amazonka                     (Credentials (..), Region (..), RequestBody (Hashed), ToHashedBody (..),
-                                               _Time, newEnv, runResourceT, send)
+import           Amazonka                     (Region (..), RequestBody (Hashed), ToHashedBody (..), _Time, newEnv,
+                                               runResourceT, send)
 import qualified Amazonka                     as AWS
+import           Amazonka.Auth                (discover)
 import           Amazonka.S3                  (BucketName, ObjectKey, StorageClass, _LocationConstraint, _ObjectKey,
                                                newAbortMultipartUpload, newCompleteMultipartUpload,
                                                newCompletedMultipartUpload, newCompletedPart, newCreateMultipartUpload,
@@ -112,11 +113,11 @@ mkObjectKey filename = (_ObjectKey %~ affix) . fromString
 -- Run an action in any AWS location
 
 inAWS :: (MonadCatch m, MonadUnliftIO m) => (AWS.Env -> ResourceT m a) -> m a
-inAWS a = newEnv Discover >>= runResourceT . a
+inAWS a = newEnv discover >>= runResourceT . a
 
 -- Run an action in the specified region
 inAWSRegion :: (MonadCatch m, MonadUnliftIO m) => Region -> (AWS.Env  -> ResourceT m a) -> m a
-inAWSRegion r a = (newEnv Discover <&> set #_envRegion r) >>= runResourceT . a
+inAWSRegion r a = (newEnv discover <&> set #region r) >>= runResourceT . a
 
 -- Run an action at the region appropriate for the given bucket
 inAWSBucket :: (MonadCatch m, MonadUnliftIO m) => BucketName -> (AWS.Env -> ResourceT m a) -> m a
@@ -149,7 +150,7 @@ createMultipart hook fp key = do
   let chunks = [1 .. ceiling @Double (fromIntegral fsize / fromIntegral chunkSize)]
   when (length chunks > 10000) $ throwIO (ETooBig (fromIntegral fsize) (length chunks))
   up <- inAWSBucket b $ flip send $ newCreateMultipartUpload b key & #storageClass ?~ cClass
-  DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. #uploadId . _Just) hook ((,Nothing) <$> chunks)
+  DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. #uploadId) hook ((,Nothing) <$> chunks)
 
 completeStr :: PartialUpload -> String
 completeStr PartialUpload{..} = show perc <> "% of around " <> show mb <> " MB complete"
