@@ -1,12 +1,24 @@
+{-# LANGUAGE BlockArguments       #-}
+{-# LANGUAGE ConstraintKinds      #-}
+{-# LANGUAGE DataKinds            #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE GADTs                #-}
+{-# LANGUAGE KindSignatures       #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE RankNTypes           #-}
+{-# LANGUAGE TypeOperators        #-}
+{-# LANGUAGE UndecidableInstances #-}
+
 module S3Up.Logging where
 
+import           Cleff
 import           Control.Monad         (when)
-import           Control.Monad.Logger  (Loc (..), LogLevel (..), LogSource, LogStr, MonadLogger (..), fromLogStr,
-                                        logDebugN, logErrorN, logInfoN)
+import           Control.Monad.Logger  (Loc (..), LogLevel (..), LogSource, LogStr, fromLogStr)
 import qualified Data.ByteString.Char8 as C8
 import           Data.Foldable         (fold)
 import           Data.String           (fromString)
 import qualified Data.Text             as T
+import           S3Up.Effects
 import           System.IO             (stderr)
 
 baseLogger :: LogLevel -> Loc -> LogSource -> LogLevel -> LogStr -> IO ()
@@ -20,20 +32,25 @@ baseLogger minLvl _ _ lvl s = when (lvl >= minLvl) $ C8.hPutStrLn stderr (fromLo
                LevelError   -> "E"
                LevelOther x -> fromString . T.unpack $ x
 
+runLogFX :: (IOE :> es) => Bool -> Eff (LogFX : es) a -> Eff es a
+runLogFX verbose = interpretIO \case
+  LogFX loc src lvl' msg -> liftIO $ baseLogger minLvl loc src lvl' msg
+  where minLvl = if verbose then LevelDebug else LevelInfo
+
 -- Text loggers
-logError, logInfo, logDbg :: MonadLogger m => T.Text -> m ()
+logError, logInfo, logDbg :: [IOE, LogFX] :>> es => T.Text -> Eff es ()
 
 -- List loggers
-logErrorL, logInfoL, logDbgL :: (Foldable f, MonadLogger m) => f T.Text-> m ()
+logErrorL, logInfoL, logDbgL :: (Foldable f, [IOE, LogFX] :>> es) => f T.Text -> Eff es ()
 
-logError = logErrorN
-logErrorL = logErrorN . fold
+logError = liftIO . print
+logErrorL = logError . fold
 
-logInfo = logInfoN
-logInfoL = logInfoN . fold
+logInfo = liftIO . print
+logInfoL = logInfo . fold -- logInfoN . fold
 
-logDbg = logDebugN
-logDbgL = logDebugN . fold
+logDbg = liftIO . print
+logDbgL = logDbg . fold -- logDebugN . fold
 
 tshow :: Show a => a -> T.Text
 tshow = T.pack . show

@@ -1,15 +1,22 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ViewPatterns  #-}
+{-# LANGUAGE OverloadedLabels, TypeApplications           #-}
+{-# LANGUAGE UndecidableInstances, GADTs, KindSignatures, LambdaCase, BlockArguments, TypeOperators, RankNTypes, FlexibleContexts, DataKinds, ConstraintKinds      #-}
 
 module Main where
 
+import Cleff
+import Cleff.Error
+import           Database.SQLite.Simple        (Connection, withConnection)
+import           Amazonka                     (runResourceT, newEnv)
+import           Amazonka.Auth                (discover)
+import           Data.Generics.Labels         ()
+import Control.Lens hiding (List, argument, )
 import           Amazonka.Data.Text                   (ToText (..))
 import           Amazonka.S3                          (ObjectKey (..), StorageClass (..))
 import           Control.Applicative                  ((<|>))
 import           Control.Monad                        (unless, when)
 import           Control.Monad.Catch                  (SomeException (..), bracket_, catch)
-import           Control.Monad.IO.Class               (MonadIO (..))
-import           Control.Monad.Reader                 (asks)
 import           Data.Char                            (toLower)
 import           Data.Foldable                        (fold, traverse_)
 import           Data.List                            (intercalate, partition, sortOn)
@@ -32,9 +39,13 @@ import           System.IO                            (BufferMode (..), hFlush, 
 import           UnliftIO                             (mapConcurrently)
 
 import           S3Up
-import qualified S3Up.DB                              as DB
+import S3Up.DB
 import           S3Up.Logging
 import           S3Up.Types
+import S3Up.Effects
+import qualified System.Posix.Files as Posix
+import qualified System.Directory             as Dir
+import qualified Data.ByteString.Lazy         as BL
 
 atLeast :: (Read n, Show n, Ord n, Num n) => n -> ReadM n
 atLeast n = auto >>= \i -> if i >= n then pure i else readerError ("must be at least " <> show n)
@@ -92,15 +103,35 @@ options confdir = Options
 some1 :: Parser a -> Parser (NonEmpty a)
 some1 p = NE.fromList <$> some p
 
-runCreate :: Either String (NonEmpty (FilePath, ObjectKey)) -> S3Up ()
+type S3Up es = ([IOE, S3FX, OptFX, FSFX, DBFX, LogFX, Error ETooBig] :>> es)
+
+runS3FXIO :: IOE :> es => Eff (S3FX : es) a -> Eff es a
+runS3FXIO = interpretIO \case
+  InAWSFX a -> newEnv discover >>= runResourceT . a
+  InAWSRegionFX r a -> (newEnv discover <&> set #region r) >>= runResourceT . a
+
+runOptFX :: IOE :> es => Options -> Eff (OptFX : es) a -> Eff es a
+runOptFX o = interpret \case
+  GetOptionsFX -> pure o
+
+runFSFX :: IOE :> es => Eff (FSFX : es) a -> Eff es a
+runFSFX = interpretIO \case
+  FileSize fp -> toInteger . Posix.fileSize <$> (liftIO . Posix.getFileStatus) fp
+  RemoveFile fp -> liftIO (Dir.removeFile fp)
+  FileChunk fp off len -> BL.take (fromIntegral len) <$> BL.drop (fromIntegral off) <$> BL.readFile fp
+
+runFX :: (IOE :> es, Show err) => Connection -> Options -> Eff (LogFX : S3FX : OptFX : FSFX : DBFX : Error err : es) a -> Eff es (Either err a)
+runFX db o@Options{..} = runError . runDBFX db . runFSFX . runOptFX o . runS3FXIO . runLogFX optVerbose
+
+runCreate :: S3Up es => Either String (NonEmpty (FilePath, ObjectKey)) -> Eff es ()
 runCreate (Left e) = logErrorL ["Invalid paths for create: ", T.pack e]
 runCreate (Right xs) = do
-  bn <- asks (optBucket . s3Options)
-  inflight <- Set.fromList . fmap (\(_,b,k) -> (b,k)) <$> DB.listQueuedFiles
+  bn <- optBucket <$> getOptionsFX
+  inflight <- Set.fromList . fmap (\(_,b,k) -> (b,k)) <$> listQueuedFiles
   let (doing, todo) = partition (\(_,k) -> (bn,k) `Set.member` inflight) (NE.toList xs)
   traverse_ (\(fp,ok) -> logInfoL ["Skipping in-flight upload of ", tshow fp, " -> ", tshow ok]) doing
-  c <- asks (optCreateConcurrency . s3Options)
-  hook <- asks (optHook . s3Options)
+  c <- optCreateConcurrency <$> getOptionsFX
+  hook <- optHook <$> getOptionsFX
   mapConcurrentlyLimited_ c (one hook) todo
 
   where
@@ -110,9 +141,9 @@ runCreate (Right xs) = do
                tshow (length _pu_parts), " parts as ", _pu_upid]
       logInfo "Upload created.  Use the 'upload' command to complete."
 
-runUpload :: S3Up ()
+runUpload :: S3Up es => Eff es ()
 runUpload = do
-  todo <- DB.listPartialUploads
+  todo <- listPartialUploads
   unless (null todo) $ logInfoL [tshow (length todo), " files to upload for a total of about ",
                                  tshow (todoMB todo), " MB"]
   mapM_ completeUpload todo
@@ -120,9 +151,9 @@ runUpload = do
                              -> mb $ _pu_chunkSize * (toInteger . length . filter (isNothing . snd) $ _pu_parts))
         mb = (`div` (1024*1024))
 
-runList :: S3Up ()
+runList :: S3Up es => Eff es ()
 runList = do
-  local <- Map.fromList . fmap (\pu@PartialUpload{..} -> ((_pu_bucket, _pu_upid), pu)) <$> DB.listPartialUploads
+  local <- Map.fromList . fmap (\pu@PartialUpload{..} -> ((_pu_bucket, _pu_upid), pu)) <$> listPartialUploads
   mapM_ (printBucket local) =<< mapConcurrently (\b -> (b,) <$> tryList b) =<< allBuckets
   where
     pl = liftIO . putStrLn . fold
@@ -162,8 +193,8 @@ prompt s = liftIO (putStr s >> hFlush stdout >> bufd wait)
         bracket_ (hSetEcho stdin False >> hSetBuffering stdin NoBuffering)
           (hSetEcho stdin olde >> hSetBuffering stdin oldb) a
 
-runInteractiveAbort :: S3Up ()
-runInteractiveAbort = mapM_ askAbort =<< listMultiparts =<< asks (optBucket . s3Options)
+runInteractiveAbort :: S3Up es => Eff es ()
+runInteractiveAbort = mapM_ askAbort =<< listMultiparts =<< optBucket <$> getOptionsFX
   where
     askAbort (t,k,i) = do
       liftIO . putStrLn $ fold [show t, " ", show k]
@@ -171,7 +202,7 @@ runInteractiveAbort = mapM_ askAbort =<< listMultiparts =<< asks (optBucket . s3
       liftIO (putStrLn "")
       when shouldAbort $ logInfoL ["Deleting ", tshow i] >> abortUpload k i
 
-run :: Command -> S3Up ()
+run :: S3Up es => Command -> Eff es ()
 run (Create l)       = runCreate l
 run Upload           = runUpload
 run List             = runList
@@ -183,7 +214,10 @@ main = do
   confdir <- (</> ".config/s3up") <$> getHomeDirectory
   createDirectoryIfMissing True confdir
   o@Options{..} <- customExecParser (prefs showHelpOnError) (opts confdir)
-  runWithOptions o (run optCommand)
+  withConnection optDBPath $ \db ->
+    runIOE (runFX db o (run optCommand)) >>= \case
+      Left e -> putStrLn ("Error: " <> show @ETooBig e)
+      Right _ -> pure ()
 
   where
     opts confdir = info (options confdir <**> helper)

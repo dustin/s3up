@@ -17,7 +17,7 @@
 #
 # resolver: ./custom-snapshot.yaml
 # resolver: https://example.com/snapshots/2018-01-01.yaml
-resolver: lts-20.26
+resolver: lts-22.20
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -41,14 +41,6 @@ packages:
 #
 extra-deps:
 - crypton-0.33@sha256:5e92f29b9b7104d91fcdda1dec9400c9ad1f1791c231cc41ceebd783fb517dee,18202
-- github: brendanhay/amazonka
-  commit: 31f3d044d84912b99e396a97085a9678e699d91f
-  subdirs:
-  - lib/amazonka
-  - lib/amazonka-core
-  - lib/services/amazonka-sso
-  - lib/services/amazonka-sts
-  - lib/services/amazonka-s3
 
 # Override default flag values for local packages and extra-deps
 # flags: {}

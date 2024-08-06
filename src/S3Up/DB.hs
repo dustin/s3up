@@ -1,22 +1,21 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE BlockArguments       #-}
+{-# LANGUAGE ConstraintKinds      #-}
+{-# LANGUAGE DataKinds            #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE GADTs                #-}
+{-# LANGUAGE KindSignatures       #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE RankNTypes           #-}
+{-# LANGUAGE TypeOperators        #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module S3Up.DB (
-  HasS3UpDB(..),
-  withDB,
-  initTables,
-  storeUpload,
-  completedUploadPart,
-  completedUpload,
-  abortedUpload,
-  listPartialUploads,
-  listQueuedFiles) where
+module S3Up.DB (runDBFX) where
 
 import           Amazonka.Data.ByteString         (ToByteString (..))
 import           Amazonka.Data.Text               (FromText, ToText (..), fromText)
 import           Amazonka.S3.Types                (BucketName (..), ETag (..), ObjectKey (..))
-import           Control.Monad.IO.Class           (MonadIO (..))
-import           Control.Monad.Reader             (ReaderT (..), ask, runReaderT)
+import           Cleff
 import qualified Data.ByteString                  as BS
 import           Data.List                        (sortOn)
 import qualified Data.Map.Strict                  as Map
@@ -30,15 +29,18 @@ import           Database.SQLite.Simple.Ok
 import           Database.SQLite.Simple.ToField
 import           Text.Read                        (readMaybe)
 
+import           S3Up.Effects                     (DBFX (..))
 import           S3Up.Types
 
-class Monad m => HasS3UpDB m where
-  s3UpDB :: m Connection
-
-instance {-# OVERLAPPING #-} Monad m => HasS3UpDB (ReaderT Connection m) where s3UpDB = ask
-
-withDB :: Connection -> ReaderT Connection m a -> m a
-withDB = flip runReaderT
+runDBFX :: IOE :> es => Connection -> Eff (DBFX : es) a -> Eff es a
+runDBFX db = interpretIO \case
+  InitTables                -> initTables db
+  StoreUpload pu            -> storeUpload db pu
+  CompletedUpload i         -> completedUpload db i
+  CompletedUploadPart i p e -> completedUploadPart db i p e
+  AbortedUpload i           -> abortedUpload db i
+  ListQueuedFiles           -> listQueuedFiles db
+  ListPartialUploads        -> listPartialUploads db
 
 instance FromRow PartialUpload where
   fromRow =
@@ -92,57 +94,57 @@ initTables db = do
   execute_ db $ "pragma user_version = " <> (fromString . show . maximum . fmap fst $ initQueries)
 
 -- A simple query.
-q_ :: (HasS3UpDB m, MonadIO m, FromRow r) => Query -> m [r]
-q_ q = liftIO . flip query_ q =<< s3UpDB
+q_ :: FromRow r => Connection -> Query -> IO [r]
+q_ db q = query_ db q
 
 -- execute many
-em :: (HasS3UpDB m, MonadIO m, ToRow r) => Query -> [r] -> m ()
-em q rs = s3UpDB >>= \db -> liftIO $ executeMany db q rs
+em :: ToRow r => Connection -> Query -> [r] -> IO ()
+em = executeMany
 
 -- execute
-ex :: (HasS3UpDB m, MonadIO m, ToRow r) => Query -> r -> m ()
-ex q r = s3UpDB >>= \db -> liftIO $ execute db q r
+ex :: ToRow r => Connection -> Query -> r -> IO ()
+ex = execute
 
 -- execute_
-ex_ :: (HasS3UpDB m, MonadIO m) => Query -> m ()
-ex_ q = s3UpDB >>= \db -> liftIO $ execute_ db q
+ex_ :: Connection -> Query -> IO ()
+ex_ = execute_
 
 -- tx :: (HasS3UpDB m1, MonadIO m1, HasS3UpDB m2, MonadIO m2) => m1 a -> m2 a
-tx :: (HasS3UpDB m, MonadIO m) => ReaderT Connection IO b -> m b
-tx a = s3UpDB >>= \db -> liftIO $ withTransaction db (withDB db a)
+tx :: Connection -> IO b -> IO b
+tx db = withTransaction db
 
-storeUpload :: (HasS3UpDB m, MonadIO m) => PartialUpload -> m PartialUpload
-storeUpload pu@PartialUpload{..} = tx $ do
-  ex "insert into uploads (chunk_size, bucket_name, filename, key, upid, post_upload) values (?,?,?,?,?,?)" (
+storeUpload :: Connection -> PartialUpload -> IO PartialUpload
+storeUpload db pu@PartialUpload{..} = tx db $ do
+  ex db "insert into uploads (chunk_size, bucket_name, filename, key, upid, post_upload) values (?,?,?,?,?,?)" (
     _pu_chunkSize, _pu_bucket, _pu_filename, _pu_key, _pu_upid, _pu_hook)
   pid <- fromIntegral <$> lid
   let vals = [(pid, fst i) | i <- _pu_parts]
-  em "insert into upload_parts (id, part) values (?,?)" vals
+  em db "insert into upload_parts (id, part) values (?,?)" vals
   pure pu{_pu_id=pid}
 
   where
-    lid = s3UpDB >>= liftIO . lastInsertRowId
+    lid = lastInsertRowId db
 
-completedUploadPart :: (HasS3UpDB m, MonadIO m) => UploadID -> Int -> ETag -> m ()
-completedUploadPart i p e = ex "update upload_parts set etag = ? where id = ? and part = ?" (e, i, p)
+completedUploadPart :: Connection -> UploadID -> Int -> ETag -> IO ()
+completedUploadPart db i p e = ex db "update upload_parts set etag = ? where id = ? and part = ?" (e, i, p)
 
-completedUpload :: (HasS3UpDB m, MonadIO m) => UploadID -> m ()
-completedUpload i = tx $ do
-  ex "delete from upload_parts where id = ?" (Only i)
-  ex "delete from uploads where id = ?" (Only i)
+completedUpload :: Connection -> UploadID -> IO ()
+completedUpload db i = tx db $ do
+  ex db "delete from upload_parts where id = ?" (Only i)
+  ex db "delete from uploads where id = ?" (Only i)
 
-abortedUpload :: (HasS3UpDB m, MonadIO m) => S3UploadID -> m ()
-abortedUpload i = tx $ do
-  ex "delete from uploads where upid = ?" (Only i)
-  ex_ "delete from upload_parts where id not in (select id from uploads)"
+abortedUpload :: Connection -> S3UploadID -> IO ()
+abortedUpload db i = tx db $ do
+  ex db "delete from uploads where upid = ?" (Only i)
+  ex_ db "delete from upload_parts where id not in (select id from uploads)"
 
 -- Return in order of least work to do.
-listPartialUploads :: (HasS3UpDB m, MonadIO m) => m [PartialUpload]
-listPartialUploads = do
-  segs <- Map.fromListWith (<>) . fmap (\(i,p,e) -> (i, [(p,e)])) <$> q_ "select id, part, etag from upload_parts"
+listPartialUploads :: Connection -> IO [PartialUpload]
+listPartialUploads db = do
+  segs <- Map.fromListWith (<>) . fmap (\(i,p,e) -> (i, [(p,e)])) <$> q_ db "select id, part, etag from upload_parts"
   sortOn (length . filter (isNothing . snd) . _pu_parts) .
     map (\p@PartialUpload{..} -> p{_pu_parts=Map.findWithDefault [] _pu_id segs})
-    <$> q_ "select id, chunk_size, bucket_name, filename, key, upid, post_upload from uploads"
+    <$> q_ db "select id, chunk_size, bucket_name, filename, key, upid, post_upload from uploads"
 
-listQueuedFiles :: (HasS3UpDB m, MonadIO m) => m [(FilePath, BucketName, ObjectKey)]
-listQueuedFiles = q_ "select filename, bucket_name, key from uploads"
+listQueuedFiles :: Connection -> IO [(FilePath, BucketName, ObjectKey)]
+listQueuedFiles db = q_ db "select filename, bucket_name, key from uploads"

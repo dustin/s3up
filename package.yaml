@@ -28,8 +28,6 @@ dependencies:
 - conduit-extra
 - sqlite-simple
 - monad-logger
-- mtl
-- transformers
 - async
 - unliftio
 - generic-lens
@@ -50,6 +48,7 @@ dependencies:
 - retry
 - unliftio-core
 - network
+- cleff
 
 library:
   source-dirs: src

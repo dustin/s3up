@@ -1,92 +1,52 @@
+{-# LANGUAGE BlockArguments             #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures             #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedLabels           #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module S3Up where
 
-import           Amazonka                     (Region (..), RequestBody (Hashed), ToHashedBody (..), _Time, newEnv,
-                                               runResourceT, send)
+import           Amazonka                     (Region (..), RequestBody (Hashed), ToHashedBody (..), _Time, send)
 import qualified Amazonka                     as AWS
-import           Amazonka.Auth                (discover)
-import           Amazonka.S3                  (BucketName, ObjectKey, StorageClass, _LocationConstraint, _ObjectKey,
+import           Amazonka.S3                  (BucketName, ObjectKey, _LocationConstraint, _ObjectKey,
                                                newAbortMultipartUpload, newCompleteMultipartUpload,
                                                newCompletedMultipartUpload, newCompletedPart, newCreateMultipartUpload,
                                                newGetBucketLocation, newListBuckets, newListMultipartUploads,
                                                newUploadPart)
+import           Cleff                        hiding (send)
+import           Cleff.Error
 import           Control.Concurrent.QSem      (newQSem, signalQSem, waitQSem)
 import           Control.Lens
 import           Control.Monad                (void, when)
-import           Control.Monad.Catch          (Exception (..), MonadCatch (..), MonadMask (..), MonadThrow (..),
-                                               bracket_)
-import           Control.Monad.IO.Class       (MonadIO (..))
-import           Control.Monad.Logger         (Loc (..), LogLevel (..), LogSource, LogStr, MonadLogger (..),
-                                               ToLogStr (..), monadLoggerLog)
-import           Control.Monad.Reader         (MonadReader, ReaderT (..), asks)
+import           Control.Monad.Catch          (Exception (..), MonadMask (..), bracket_)
 import           Control.Monad.Trans.Resource (ResourceT)
 import           Control.Retry                (RetryStatus (..), exponentialBackoff, limitRetries, recoverAll)
-import qualified Data.ByteString.Lazy         as BL
 import           Data.Foldable                (fold)
 import           Data.Generics.Labels         ()
 import           Data.List                    (sort)
-import           Data.List.NonEmpty           (NonEmpty (..))
-import           Data.Maybe                   (isJust)
+import           Data.Maybe                   (fromJust, isJust)
 import           Data.String                  (fromString)
 import           Data.Text                    (Text)
 import qualified Data.Text                    as T
 import           Data.Time.Clock              (UTCTime)
-import           Database.SQLite.Simple       (Connection, withConnection)
 import           GHC.Exts                     (IsList (..))
-import           System.Directory             (removeFile)
 import           System.FilePath.Posix        (takeFileName)
-import           System.IO                    (IOMode (..), SeekMode (..), hSeek, withFile)
-import           System.Posix.Files           (fileSize, getFileStatus)
-import           UnliftIO                     (MonadUnliftIO (..), mapConcurrently, mapConcurrently_, throwIO)
+import           UnliftIO                     (mapConcurrently, mapConcurrently_)
 
-import qualified S3Up.DB                      as DB
+import           S3Up.Effects
 import           S3Up.Logging
 import           S3Up.Types
-
-data Command = Create (Either String (NonEmpty (FilePath, ObjectKey)))
-             | Upload
-             | List
-             | InteractiveAbort
-             | Abort ObjectKey S3UploadID
-             deriving Show
-
-data Options = Options {
-  optDBPath            :: FilePath,
-  optBucket            :: BucketName,
-  optChunkSize         :: Integer,
-  optClass             :: StorageClass,
-  optVerbose           :: Bool,
-  optConcurrency       :: Int,
-  optCreateConcurrency :: Int,
-  optHook              :: PostUploadHook,
-  optCommand           :: Command
-  } deriving Show
-
-data Env = Env
-    { s3Options :: Options
-    , dbConn    :: Connection
-    , envLogger :: Loc -> LogSource -> LogLevel -> LogStr -> IO ()
-    }
-
-newtype S3Up a = S3Up
-  { runS3Up :: ReaderT Env IO a
-  } deriving (Applicative, Functor, Monad, MonadIO, MonadUnliftIO,
-              MonadCatch, MonadThrow, MonadMask, MonadReader Env, MonadFail)
-
-instance (Monad m, MonadReader Env m) => DB.HasS3UpDB m where
-  s3UpDB = asks dbConn
-
-instance MonadLogger S3Up where
-  monadLoggerLog loc src lvl msg = asks envLogger >>= \l -> liftIO $ l loc src lvl (toLogStr msg)
 
 mapConcurrentlyLimited :: (MonadMask m, MonadUnliftIO m, Traversable f)
                        => Int
@@ -112,21 +72,17 @@ mkObjectKey filename = (_ObjectKey %~ affix) . fromString
 
 -- Run an action in any AWS location
 
-inAWS :: (MonadCatch m, MonadUnliftIO m) => (AWS.Env -> ResourceT m a) -> m a
-inAWS a = newEnv discover >>= runResourceT . a
+inAWS :: S3FX :> es => (AWS.Env -> ResourceT IO a) -> Eff es a
+inAWS = inAWSFX
 
--- Run an action in the specified region
-inAWSRegion :: (MonadCatch m, MonadUnliftIO m) => Region -> (AWS.Env  -> ResourceT m a) -> m a
-inAWSRegion r a = (newEnv discover <&> set #region r) >>= runResourceT . a
+inAWSRegion :: S3FX :> es => Region -> (AWS.Env  -> ResourceT IO a) -> Eff es a
+inAWSRegion r = inAWSRegionFX r
 
--- Run an action at the region appropriate for the given bucket
-inAWSBucket :: (MonadCatch m, MonadUnliftIO m) => BucketName -> (AWS.Env -> ResourceT m a) -> m a
-inAWSBucket b a = bucketRegion b >>= \r -> inAWSRegion r a
+bucketRegion :: S3FX :> es => BucketName -> Eff es Region
+bucketRegion b = view (#locationConstraint . _LocationConstraint) <$> (inAWS . flip send $ newGetBucketLocation b)
 
--- Get the correct region for the given bucket
-bucketRegion :: (MonadCatch m, MonadUnliftIO m) => BucketName -> m Region
-bucketRegion b = view (#locationConstraint . _LocationConstraint)
-                 <$> (inAWS . flip send $ newGetBucketLocation b)
+inAWSBucket :: S3FX :> es => BucketName -> (AWS.Env -> ResourceT IO a) -> Eff es a
+inAWSBucket b a = bucketRegion b >>= flip inAWSRegion a
 
 calcMinSize :: Int -> Int
 calcMinSize fsize = max (5*mb) (ceiling @Double (fromIntegral fsize / 10000))
@@ -141,16 +97,16 @@ instance Show ETooBig where
 
 instance Exception ETooBig
 
-createMultipart :: PostUploadHook -> FilePath -> ObjectKey -> S3Up PartialUpload
+createMultipart :: ([S3FX, OptFX, FSFX, DBFX, Error ETooBig] :>> es) => PostUploadHook -> FilePath -> ObjectKey -> Eff es PartialUpload
 createMultipart hook fp key = do
-  fsize <- toInteger . fileSize <$> (liftIO . getFileStatus) fp
-  b <- asks (optBucket . s3Options)
-  cClass <- asks (optClass . s3Options)
-  chunkSize <- asks (optChunkSize . s3Options)
+  fsize <- fileSize fp
+  b <- optBucket <$> getOptionsFX
+  cClass <- optClass <$> getOptionsFX
+  chunkSize <- optChunkSize <$> getOptionsFX
   let chunks = [1 .. ceiling @Double (fromIntegral fsize / fromIntegral chunkSize)]
-  when (length chunks > 10000) $ throwIO (ETooBig (fromIntegral fsize) (length chunks))
+  when (length chunks > 10000) $ throwError (ETooBig (fromIntegral fsize) (length chunks))
   up <- inAWSBucket b $ flip send $ newCreateMultipartUpload b key & #storageClass ?~ cClass
-  DB.storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. #uploadId) hook ((,Nothing) <$> chunks)
+  storeUpload $ PartialUpload 0 chunkSize b fp key (up ^. #uploadId) hook ((,Nothing) <$> chunks)
 
 completeStr :: PartialUpload -> String
 completeStr PartialUpload{..} = show perc <> "% of around " <> show mb <> " MB complete"
@@ -158,57 +114,46 @@ completeStr PartialUpload{..} = show perc <> "% of around " <> show mb <> " MB c
         perc = 100 * length todo `div` length _pu_parts
         mb = fromIntegral _pu_chunkSize * length _pu_parts `div` (1024*1024)
 
-completeUpload :: PartialUpload -> S3Up ()
+completeUpload ::  [S3FX, OptFX, FSFX, DBFX, LogFX, IOE] :>> es => PartialUpload -> Eff es ()
 completeUpload pu@PartialUpload{..} = do
   r <- bucketRegion _pu_bucket
-  c <- asks (optConcurrency . s3Options)
+  c <- optConcurrency <$> getOptionsFX
   logInfoL ["Uploading remaining parts of ", tshow _pu_filename, " to ", tshow _pu_bucket, ":", tshow _pu_key,
             " ", T.pack (completeStr pu)]
   finished <- fromList . sort <$> mapConcurrentlyLimited c (uc r) _pu_parts
-  logInfoL ["Completed all parts of ", tshow _pu_filename, " to ", tshow _pu_bucket, ":", tshow _pu_key]
+  -- logInfoL ["Completed all parts of ", tshow _pu_filename, " to ", tshow _pu_bucket, ":", tshow _pu_key]
   let completed = newCompletedMultipartUpload & #parts ?~ (uncurry newCompletedPart <$> finished)
-  inAWSRegion r $ \env -> void . send env $ newCompleteMultipartUpload _pu_bucket _pu_key _pu_upid & #multipartUpload ?~ completed
-  DB.completedUpload _pu_id
+  inAWSRegionFX r $ \env -> void . send env $ newCompleteMultipartUpload _pu_bucket _pu_key _pu_upid & #multipartUpload ?~ completed
+  completedUpload _pu_id
   when (_pu_hook == DeleteFile) $ do
-    logInfoL ["Deleting ", tshow _pu_filename]
-    liftIO $ removeFile _pu_filename
+    -- logInfoL ["Deleting ", tshow _pu_filename]
+    removeFile _pu_filename
 
   where
     uc _ (n,Just e) = pure (n,e)
     uc r (n,Nothing) = do
-      body <- liftIO $ withFile _pu_filename ReadMode $ \fh -> do
-        hSeek fh AbsoluteSeek ((fromIntegral n - 1) * _pu_chunkSize)
-        Hashed . toHashed <$> BL.hGet fh (fromIntegral _pu_chunkSize)
-      Just etag <- recoverAll policy $ \rs -> do
+      body <- Hashed . toHashed <$> fileChunk _pu_filename ((fromIntegral n - 1) * _pu_chunkSize) _pu_chunkSize
+      etag <- recoverAll policy $ \rs -> do
         logDbgL ["uploading chunk ", tshow n, " ", tshow body, " attempt ", tshow (rsIterNumber rs)]
         view #eTag <$> inAWSRegion r (flip send $ newUploadPart _pu_bucket _pu_key n _pu_upid body)
-      DB.completedUploadPart _pu_id n etag
+      completedUploadPart _pu_id n (fromJust etag)
       logDbgL ["finished chunk ", tshow n, " ", tshow body, " as ", tshow etag]
-      pure (n, etag)
+      pure (n, fromJust etag)
 
     policy = exponentialBackoff 2000000 <> limitRetries 9
 
-listMultiparts :: BucketName -> S3Up [(UTCTime, ObjectKey, Text)]
+listMultiparts :: S3FX :> es => BucketName -> Eff es [(UTCTime, ObjectKey, Text)]
 listMultiparts b = do
   ups <- inAWSBucket b . flip send $ newListMultipartUploads b
   pure $ ups ^.. #uploads . folded . folded . to (\u -> (u ^?! #initiated . _Just . _Time,
                                                                  u ^?! #key . _Just,
                                                                  u ^. #uploadId . _Just))
 
-allBuckets :: S3Up [BucketName]
+allBuckets :: S3FX :> es => Eff es [BucketName]
 allBuckets = toListOf (#buckets . folded . folded . #name) <$> inAWS (`send` newListBuckets)
 
-abortUpload :: ObjectKey -> S3UploadID -> S3Up ()
+abortUpload :: ([DBFX, S3FX, OptFX] :>> es) => ObjectKey -> S3UploadID -> Eff es ()
 abortUpload k u = do
-  b <- asks (optBucket . s3Options)
+  b <- optBucket <$> getOptionsFX
   inAWSBucket b $ \env -> void . send env $ newAbortMultipartUpload b k u
-  DB.abortedUpload u
-
-runIO :: Env -> S3Up a -> IO a
-runIO e m = runReaderT (runS3Up m) e
-
-runWithOptions :: Options -> S3Up a -> IO a
-runWithOptions o@Options{..} a = withConnection optDBPath $ \db -> do
-  DB.initTables db
-  let minLvl = if optVerbose then LevelDebug else LevelInfo
-  liftIO $ runIO (Env o db (baseLogger minLvl)) a
+  abortedUpload u

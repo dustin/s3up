@@ -1,6 +1,19 @@
+{-# LANGUAGE BlockArguments       #-}
+{-# LANGUAGE ConstraintKinds      #-}
+{-# LANGUAGE DataKinds            #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE GADTs                #-}
+{-# LANGUAGE KindSignatures       #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE RankNTypes           #-}
+{-# LANGUAGE TypeApplications     #-}
+{-# LANGUAGE TypeOperators        #-}
+{-# LANGUAGE UndecidableInstances #-}
+
 module DBSpec where
 
-import           Control.Monad.Reader   (ReaderT (..))
+import           Cleff
+import           Cleff.Fail
 import           Data.Foldable          (traverse_)
 import           Data.List              (sort)
 import           Data.Maybe             (listToMaybe)
@@ -12,6 +25,7 @@ import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck  as QC
 
 import           S3Up.DB
+import           S3Up.Effects
 import           S3Up.Types
 
 instance Arbitrary PartialUpload where
@@ -25,11 +39,12 @@ instance Arbitrary PartialUpload where
                 <*> arbitraryBoundedEnum
                 <*> (zip [0..] <$> listOf (Just . fromString . getASCIIString <$> arbitrary `suchThat` (not . null . getASCIIString)))
 
-runDB :: ReaderT Connection IO a -> IO a
-runDB a = withConnection ":memory:" $ \db -> do
-  initTables db
-  initTables db -- run this twice since in real life it'll run every time
-  withDB db a
+runDB :: forall a. (forall es. [DBFX, Fail, IOE] :>> es => Eff es a) -> IO a
+runDB a = withConnection ":memory:" $ \db ->
+  runIOE . runFailIO . runDBFX db $ do
+    initTables
+    initTables
+    a
 
 prop_storeUpload :: PartialUpload -> Property
 prop_storeUpload pu = ioProperty $ do
