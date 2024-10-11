@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  GHC_VERSION: '9.6.5'
+
 jobs:
   build_stack:
     strategy:
@@ -16,6 +19,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+
+    - name: Set up Haskell
+      uses: haskell-actions/setup@v2
+      with:
+        ghc-version: ${{ env.GHC_VERSION }}
 
     - name: Cache Key
       id: cache_key
@@ -55,6 +63,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+
+    - name: Set up Haskell
+      uses: haskell-actions/setup@v2
+      with:
+        ghc-version: ${{ env.GHC_VERSION }}
 
     - name: Cache Key
       id: cache_key
