@@ -16,13 +16,15 @@
 
 module S3Up.Effects where
 
-import           Amazonka                     (Region (..))
-import qualified Amazonka                     as AWS
-import           Amazonka.S3.Types            (BucketName (..), ETag (..), ObjectKey (..))
+import           Amazonka                          (Region (..), RequestBody (..))
+import qualified Amazonka                          as AWS
+import           Amazonka.S3.Types                 (BucketName (..), CompletedMultipartUpload (..), ETag (..),
+                                                    ObjectKey (..))
+import           Amazonka.S3.Types.MultipartUpload (MultipartUpload)
 import           Cleff
-import           Control.Monad.Logger         (Loc (..), LogLevel (..), LogSource, LogStr)
-import           Control.Monad.Trans.Resource (ResourceT)
-import qualified Data.ByteString.Lazy         as BL
+import           Control.Monad.Logger              (Loc (..), LogLevel (..), LogSource, LogStr)
+import           Control.Monad.Trans.Resource      (ResourceT)
+import qualified Data.ByteString.Lazy              as BL
 import           S3Up.Types
 
 data OptFX :: Effect where
@@ -35,6 +37,16 @@ data S3FX :: Effect where
   InAWSRegionFX :: Region -> (AWS.Env -> ResourceT IO a) -> S3FX m a
 
 makeEffect ''S3FX
+
+data S3Op :: Effect where
+  ListBuckets :: S3Op m [BucketName]
+  ListMultipartUploads :: BucketName -> S3Op m [MultipartUpload]
+  CreateMultipartUpload :: ObjectKey -> S3Op m S3UploadID
+  NewUploadPart :: BucketName -> ObjectKey -> Int -> S3UploadID -> RequestBody -> S3Op m (Maybe ETag)
+  CompleteMultipartUpload :: BucketName -> ObjectKey -> S3UploadID -> CompletedMultipartUpload -> S3Op m ()
+  AbortMultipartUpload :: ObjectKey -> S3UploadID -> S3Op m ()
+
+makeEffect ''S3Op
 
 data LogFX :: Effect where
   LogFX :: Loc -> LogSource -> LogLevel -> LogStr -> LogFX m ()

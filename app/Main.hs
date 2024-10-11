@@ -1,24 +1,34 @@
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE ViewPatterns  #-}
-{-# LANGUAGE OverloadedLabels, TypeApplications           #-}
-{-# LANGUAGE UndecidableInstances, GADTs, KindSignatures, LambdaCase, BlockArguments, TypeOperators, RankNTypes, FlexibleContexts, DataKinds, ConstraintKinds      #-}
+{-# LANGUAGE BlockArguments       #-}
+{-# LANGUAGE ConstraintKinds      #-}
+{-# LANGUAGE DataKinds            #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE GADTs                #-}
+{-# LANGUAGE KindSignatures       #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE OverloadedLabels     #-}
+{-# LANGUAGE RankNTypes           #-}
+{-# LANGUAGE TupleSections        #-}
+{-# LANGUAGE TypeApplications     #-}
+{-# LANGUAGE TypeOperators        #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns         #-}
 
 module Main where
 
-import Cleff
-import Cleff.Error
-import           Database.SQLite.Simple        (Connection, withConnection)
-import           Amazonka                     (runResourceT, newEnv)
-import           Amazonka.Auth                (discover)
-import           Data.Generics.Labels         ()
-import Control.Lens hiding (List, argument, )
+import           Amazonka                             (newEnv, runResourceT, send)
+import           Amazonka.Auth                        (discover)
 import           Amazonka.Data.Text                   (ToText (..))
-import           Amazonka.S3                          (ObjectKey (..), StorageClass (..))
+import           Amazonka.S3                          (ObjectKey, StorageClass (..))
+import qualified Amazonka.S3                          as S3
+import           Cleff                                hiding (send)
+import           Cleff.Error
 import           Control.Applicative                  ((<|>))
-import           Control.Monad                        (unless, when)
+import           Control.Lens                         hiding (List, argument)
+import           Control.Monad                        (unless, void, when)
 import           Control.Monad.Catch                  (SomeException (..), bracket_, catch)
 import           Data.Char                            (toLower)
 import           Data.Foldable                        (fold, traverse_)
+import           Data.Generics.Labels                 ()
 import           Data.List                            (intercalate, partition, sortOn)
 import           Data.List.NonEmpty                   (NonEmpty (..))
 import qualified Data.List.NonEmpty                   as NE
@@ -26,6 +36,7 @@ import qualified Data.Map.Strict                      as Map
 import           Data.Maybe                           (isNothing)
 import qualified Data.Set                             as Set
 import qualified Data.Text                            as T
+import           Database.SQLite.Simple               (Connection, withConnection)
 import           Options.Applicative                  (Parser, ReadM, argument, auto, command, customExecParser,
                                                        eitherReader, fullDesc, help, helper, info, long, metavar,
                                                        option, prefs, progDesc, readerError, short, showDefault,
@@ -38,14 +49,14 @@ import           System.IO                            (BufferMode (..), hFlush, 
                                                        hSetEcho, stdin, stdout)
 import           UnliftIO                             (mapConcurrently)
 
+import qualified Data.ByteString.Lazy                 as BL
 import           S3Up
-import S3Up.DB
+import           S3Up.DB
+import           S3Up.Effects
 import           S3Up.Logging
 import           S3Up.Types
-import S3Up.Effects
-import qualified System.Posix.Files as Posix
-import qualified System.Directory             as Dir
-import qualified Data.ByteString.Lazy         as BL
+import qualified System.Directory                     as Dir
+import qualified System.Posix.Files                   as Posix
 
 atLeast :: (Read n, Show n, Ord n, Num n) => n -> ReadM n
 atLeast n = auto >>= \i -> if i >= n then pure i else readerError ("must be at least " <> show n)
@@ -103,12 +114,21 @@ options confdir = Options
 some1 :: Parser a -> Parser (NonEmpty a)
 some1 p = NE.fromList <$> some p
 
-type S3Up es = ([IOE, S3FX, OptFX, FSFX, DBFX, LogFX, Error ETooBig] :>> es)
+type S3Up es = ([IOE, S3Op, OptFX, FSFX, DBFX, LogFX, Error ETooBig] :>> es)
 
 runS3FXIO :: IOE :> es => Eff (S3FX : es) a -> Eff es a
 runS3FXIO = interpretIO \case
-  InAWSFX a -> newEnv discover >>= runResourceT . a
+  InAWSFX a         -> newEnv discover >>= runResourceT . a
   InAWSRegionFX r a -> (newEnv discover <&> set #region r) >>= runResourceT . a
+
+runS3Op :: S3FX :> es => Options -> Eff (S3Op : es) a -> Eff es a
+runS3Op Options{..} = interpret \case
+  ListBuckets -> toListOf (#buckets . folded . folded . #name) <$> inAWS (`send` S3.newListBuckets)
+  ListMultipartUploads b -> toListOf (#uploads . folded . folded) <$> (inAWSBucket b . flip send) (S3.newListMultipartUploads b)
+  CreateMultipartUpload k -> view #uploadId <$> inAWSBucket optBucket (flip send $ S3.newCreateMultipartUpload optBucket k & #storageClass ?~ optClass)
+  NewUploadPart b i n c d -> view #eTag <$> inAWS (flip send $ S3.newUploadPart b i n c d)
+  CompleteMultipartUpload b k i completed -> void <$> inAWS $ flip send $ S3.newCompleteMultipartUpload b k i & #multipartUpload ?~ completed
+  AbortMultipartUpload k u -> void <$> inAWS $ flip send $ S3.newAbortMultipartUpload optBucket k u
 
 runOptFX :: IOE :> es => Options -> Eff (OptFX : es) a -> Eff es a
 runOptFX o = interpret \case
@@ -116,12 +136,12 @@ runOptFX o = interpret \case
 
 runFSFX :: IOE :> es => Eff (FSFX : es) a -> Eff es a
 runFSFX = interpretIO \case
-  FileSize fp -> toInteger . Posix.fileSize <$> (liftIO . Posix.getFileStatus) fp
-  RemoveFile fp -> liftIO (Dir.removeFile fp)
+  FileSize fp          -> toInteger . Posix.fileSize <$> (liftIO . Posix.getFileStatus) fp
+  RemoveFile fp        -> liftIO (Dir.removeFile fp)
   FileChunk fp off len -> BL.take (fromIntegral len) <$> BL.drop (fromIntegral off) <$> BL.readFile fp
 
-runFX :: (IOE :> es, Show err) => Connection -> Options -> Eff (LogFX : S3FX : OptFX : FSFX : DBFX : Error err : es) a -> Eff es (Either err a)
-runFX db o@Options{..} = runError . runDBFX db . runFSFX . runOptFX o . runS3FXIO . runLogFX optVerbose
+runFX :: (IOE :> es, Show err) => Connection -> Options -> Eff (LogFX : S3Op : S3FX : OptFX : FSFX : DBFX : Error err : es) a -> Eff es (Either err a)
+runFX db o@Options{..} = runError . runDBFX db . runFSFX . runOptFX o . runS3FXIO . runS3Op o . runLogFX optVerbose
 
 runCreate :: S3Up es => Either String (NonEmpty (FilePath, ObjectKey)) -> Eff es ()
 runCreate (Left e) = logErrorL ["Invalid paths for create: ", T.pack e]
@@ -216,7 +236,7 @@ main = do
   o@Options{..} <- customExecParser (prefs showHelpOnError) (opts confdir)
   withConnection optDBPath $ \db ->
     runIOE (runFX db o (run optCommand)) >>= \case
-      Left e -> putStrLn ("Error: " <> show @ETooBig e)
+      Left e  -> putStrLn ("Error: " <> show @ETooBig e)
       Right _ -> pure ()
 
   where
