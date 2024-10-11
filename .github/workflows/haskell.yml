@@ -18,7 +18,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Set up Haskell
       uses: haskell-actions/setup@v2
@@ -49,7 +49,7 @@ jobs:
         cp $HOME/.local/bin/s3up dist
 
     - name: Store Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: s3up-${{ matrix.os }}
         path: dist
@@ -79,6 +79,9 @@ jobs:
       with:
         path: ~/.cabal
         key: ${{ matrix.os }}-${{ env.key }}
+
+    - name: Install Tasty Discover
+      run: cabal install tasty-discover
 
     - name: Build & Test
       run: |
