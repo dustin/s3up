@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  build_stack:
     strategy:
       matrix:
         os: [ubuntu-latest]
@@ -44,4 +44,39 @@ jobs:
       uses: actions/upload-artifact@v3
       with:
         name: s3up-${{ matrix.os }}
+        path: dist
+
+  build_cabal:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Cache Key
+      id: cache_key
+      run: echo "key=$(md5sum cabal.project | awk '{print $1}')" >> $GITHUB_ENV
+
+    - name: Cache Dependencies
+      id: cache
+      uses: actions/cache@v3
+      with:
+        path: ~/.cabal
+        key: ${{ matrix.os }}-${{ env.key }}
+
+    - name: Build & Test
+      run: |
+        cabal update
+        cabal build
+        cabal test
+        mkdir dist
+        cp $(cabal list-bin exe:s3up) dist
+
+    - name: Store Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: s3up-cabal-${{ matrix.os }}
         path: dist

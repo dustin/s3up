@@ -1,5 +1,4 @@
 .stack-work/
-s3up.cabal
 *~
 /s3up.db
 .direnv
