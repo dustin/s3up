@@ -15,18 +15,18 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Cache Key
       id: cache_key
-      run: echo ::set-output name=key::$(md5sum stack.yaml | awk '{print $1}')
+      run: echo "key=$(md5sum stack.yaml | awk '{print $1}')" >> $GITHUB_ENV
 
     - name: Cache Dependencies
       id: cache
-      uses: actions/cache@v1
+      uses: actions/cache@v3
       with:
         path: ~/.stack
-        key: ${{ matrix.os }}-${{ steps.cache_key.outputs.key }}
+        key: ${{ matrix.os }}-${{ env.key }}
 
     - name: Build Snapshot
       if: steps.cache.outputs.cache-hit != 'true'
@@ -41,7 +41,7 @@ jobs:
         cp $HOME/.local/bin/s3up dist
 
     - name: Store Artifact
-      uses: actions/upload-artifact@v1
+      uses: actions/upload-artifact@v3
       with:
         name: s3up-${{ matrix.os }}
         path: dist
