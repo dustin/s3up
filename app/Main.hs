@@ -126,8 +126,8 @@ runS3Op Options{..} = interpret \case
   ListBuckets -> toListOf (#buckets . folded . folded . #name) <$> inAWS (`send` S3.newListBuckets)
   ListMultipartUploads b -> toListOf (#uploads . folded . folded) <$> (inAWSBucket b . flip send) (S3.newListMultipartUploads b)
   CreateMultipartUpload k -> view #uploadId <$> inAWSBucket optBucket (flip send $ S3.newCreateMultipartUpload optBucket k & #storageClass ?~ optClass)
-  NewUploadPart b i n c d -> view #eTag <$> inAWS (flip send $ S3.newUploadPart b i n c d)
-  CompleteMultipartUpload b k i completed -> void <$> inAWS $ flip send $ S3.newCompleteMultipartUpload b k i & #multipartUpload ?~ completed
+  NewUploadPart b i n c d -> view #eTag <$> inAWSBucket b (flip send $ S3.newUploadPart b i n c d)
+  CompleteMultipartUpload b k i completed -> void <$> inAWSBucket b . flip send $ S3.newCompleteMultipartUpload b k i & #multipartUpload ?~ completed
   AbortMultipartUpload k u -> void <$> inAWS $ flip send $ S3.newAbortMultipartUpload optBucket k u
 
 runOptFX :: IOE :> es => Options -> Eff (OptFX : es) a -> Eff es a
