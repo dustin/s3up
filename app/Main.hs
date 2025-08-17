@@ -128,7 +128,7 @@ runS3Op Options{..} = interpret \case
   CreateMultipartUpload k -> view #uploadId <$> inAWSBucket optBucket (flip send $ S3.newCreateMultipartUpload optBucket k & #storageClass ?~ optClass)
   NewUploadPart b i n c d -> view #eTag <$> inAWSBucket b (flip send $ S3.newUploadPart b i n c d)
   CompleteMultipartUpload b k i completed -> void <$> inAWSBucket b . flip send $ S3.newCompleteMultipartUpload b k i & #multipartUpload ?~ completed
-  AbortMultipartUpload k u -> void <$> inAWS $ flip send $ S3.newAbortMultipartUpload optBucket k u
+  AbortMultipartUpload b k u -> void <$> inAWSBucket b $ flip send $ S3.newAbortMultipartUpload optBucket k u
 
 runOptFX :: IOE :> es => Options -> Eff (OptFX : es) a -> Eff es a
 runOptFX o = interpret \case
@@ -214,19 +214,23 @@ prompt s = liftIO (putStr s >> hFlush stdout >> bufd wait)
           (hSetEcho stdin olde >> hSetBuffering stdin oldb) a
 
 runInteractiveAbort :: S3Up es => Eff es ()
-runInteractiveAbort = mapM_ askAbort =<< listMultiparts =<< optBucket <$> getOptionsFX
+runInteractiveAbort = do
+  b <- getsOption optBucket
+  items <- listMultiparts b
+  mapM_ (askAbort b) items
+  when (null items) $ logInfoL ["No multipart uploads to abort in ", tshow b]
   where
-    askAbort (t,k,i) = do
+    askAbort b (t,k,i) = do
       liftIO . putStrLn $ fold [show t, " ", show k]
       shouldAbort <- prompt "delete? (y/N) "
       liftIO (putStrLn "")
-      when shouldAbort $ logInfoL ["Deleting ", tshow i] >> abortUpload k i
+      when shouldAbort $ logInfoL ["Deleting ", tshow i] >> abortUpload b k i
 
 run :: S3Up es => Command -> Eff es ()
 run (Create l)       = runCreate l
 run Upload           = runUpload
 run List             = runList
-run (Abort o i)      = abortUpload o i
+run (Abort o i)      = getsOption optBucket >>= \b -> abortUpload b o i
 run InteractiveAbort = runInteractiveAbort
 
 main :: IO ()

@@ -32,6 +32,9 @@ data OptFX :: Effect where
 
 makeEffect ''OptFX
 
+getsOption :: OptFX :> es => (Options -> a) -> Eff es a
+getsOption f = fmap f getOptionsFX
+
 data S3FX :: Effect where
   InAWSFX :: (AWS.Env -> ResourceT IO a) -> S3FX m a
   InAWSRegionFX :: Region -> (AWS.Env -> ResourceT IO a) -> S3FX m a
@@ -44,7 +47,7 @@ data S3Op :: Effect where
   CreateMultipartUpload :: ObjectKey -> S3Op m S3UploadID
   NewUploadPart :: BucketName -> ObjectKey -> Int -> S3UploadID -> RequestBody -> S3Op m (Maybe ETag)
   CompleteMultipartUpload :: BucketName -> ObjectKey -> S3UploadID -> CompletedMultipartUpload -> S3Op m ()
-  AbortMultipartUpload :: ObjectKey -> S3UploadID -> S3Op m ()
+  AbortMultipartUpload :: BucketName -> ObjectKey -> S3UploadID -> S3Op m ()
 
 makeEffect ''S3Op
 

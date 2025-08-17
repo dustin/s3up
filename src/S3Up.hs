@@ -145,5 +145,5 @@ listMultiparts b = fmap resolve <$> listMultipartUploads b
 allBuckets :: S3Op :> es => Eff es [BucketName]
 allBuckets = listBuckets
 
-abortUpload :: ([DBFX, S3Op, OptFX] :>> es) => ObjectKey -> S3UploadID -> Eff es ()
-abortUpload k u = abortMultipartUpload k u *> abortedUpload u
+abortUpload :: ([DBFX, S3Op] :>> es) => BucketName -> ObjectKey -> S3UploadID -> Eff es ()
+abortUpload b k u = abortMultipartUpload b k u *> abortedUpload u
