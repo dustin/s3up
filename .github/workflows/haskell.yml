@@ -2,12 +2,12 @@ name: Haskell CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
-  GHC_VERSION: '9.6.5'
+  GHC_VERSION: "9.6.5"
 
 jobs:
   build_stack:
@@ -18,41 +18,41 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-    - name: Set up Haskell
-      uses: haskell-actions/setup@v2
-      with:
-        ghc-version: ${{ env.GHC_VERSION }}
+      - name: Set up Haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: ${{ env.GHC_VERSION }}
 
-    - name: Cache Key
-      id: cache_key
-      run: echo "key=$(md5sum stack.yaml | awk '{print $1}')" >> $GITHUB_ENV
+      - name: Cache Key
+        id: cache_key
+        run: echo "key=$(md5sum stack.yaml | awk '{print $1}')" >> $GITHUB_ENV
 
-    - name: Cache Dependencies
-      id: cache
-      uses: actions/cache@v4
-      with:
-        path: ~/.stack
-        key: ${{ matrix.os }}-${{ env.key }}
+      - name: Cache Dependencies
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.stack
+          key: ${{ matrix.os }}-${{ env.key }}
 
-    - name: Build Snapshot
-      if: steps.cache.outputs.cache-hit != 'true'
-      run: |
-        stack --no-terminal test --bench --only-snapshot
+      - name: Build Snapshot
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          stack --no-terminal test --bench --only-snapshot
 
-    - name: Build & Test
-      run: |
-        stack --no-terminal test --bench --no-run-benchmarks
-        stack install
-        mkdir dist
-        cp $HOME/.local/bin/s3up dist
+      - name: Build & Test
+        run: |
+          stack --no-terminal test --bench --no-run-benchmarks
+          stack install
+          mkdir dist
+          cp $HOME/.local/bin/s3up dist
 
-    - name: Store Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: s3up-${{ matrix.os }}
-        path: dist
+      - name: Store Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3up-${{ matrix.os }}
+          path: dist
 
   build_cabal:
     strategy:
@@ -62,37 +62,37 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-    - name: Set up Haskell
-      uses: haskell-actions/setup@v2
-      with:
-        ghc-version: ${{ env.GHC_VERSION }}
+      - name: Set up Haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: ${{ env.GHC_VERSION }}
 
-    - name: Cache Key
-      id: cache_key
-      run: echo "key=$(md5sum cabal.project | awk '{print $1}')" >> $GITHUB_ENV
+      - name: Cache Key
+        id: cache_key
+        run: echo "key=$(md5sum cabal.project | awk '{print $1}')" >> $GITHUB_ENV
 
-    - name: Cache Dependencies
-      id: cache
-      uses: actions/cache@v4
-      with:
-        path: ~/.cabal
-        key: ${{ matrix.os }}-${{ env.key }}
+      - name: Cache Dependencies
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cabal
+          key: ${{ matrix.os }}-${{ env.key }}
 
-    - name: Install Tasty Discover
-      run: cabal install tasty-discover
+      - name: Install Tasty Discover
+        run: cabal install --overwrite-policy=always tasty-discover
 
-    - name: Build & Test
-      run: |
-        cabal update
-        cabal build
-        cabal test
-        mkdir dist
-        cp $(cabal list-bin exe:s3up) dist
+      - name: Build & Test
+        run: |
+          cabal update
+          cabal build
+          cabal test
+          mkdir dist
+          cp $(cabal list-bin exe:s3up) dist
 
-    - name: Store Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: s3up-cabal-${{ matrix.os }}
-        path: dist
+      - name: Store Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: s3up-cabal-${{ matrix.os }}
+          path: dist
