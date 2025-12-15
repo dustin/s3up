@@ -49,7 +49,7 @@ jobs:
           cp $HOME/.local/bin/s3up dist
 
       - name: Store Artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3up-${{ matrix.os }}
           path: dist
@@ -92,7 +92,7 @@ jobs:
           cp $(cabal list-bin exe:s3up) dist
 
       - name: Store Artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: s3up-cabal-${{ matrix.os }}
           path: dist
