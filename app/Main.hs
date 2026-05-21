@@ -239,7 +239,7 @@ main = do
   createDirectoryIfMissing True confdir
   o@Options{..} <- customExecParser (prefs showHelpOnError) (opts confdir)
   withConnection optDBPath $ \db ->
-    runIOE (runFX db o (run optCommand)) >>= \case
+    runIOE (runFX db o (initTables *> run optCommand)) >>= \case
       Left e  -> putStrLn ("Error: " <> show @ETooBig e)
       Right _ -> pure ()
 
