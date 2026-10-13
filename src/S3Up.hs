@@ -21,8 +21,6 @@ import           Amazonka                     (Region (..), RequestBody (Hashed)
 import qualified Amazonka                     as AWS
 import           Amazonka.S3                  (BucketName, ObjectKey, _LocationConstraint, _ObjectKey,
                                                newCompletedMultipartUpload, newCompletedPart, newGetBucketLocation)
-import           Cleff                        hiding (send)
-import           Cleff.Error
 import           Control.Concurrent.QSem      (newQSem, signalQSem, waitQSem)
 import           Control.Lens
 import           Control.Monad                (when)
@@ -37,6 +35,8 @@ import           Data.String                  (fromString)
 import           Data.Text                    (Text)
 import qualified Data.Text                    as T
 import           Data.Time.Clock              (UTCTime)
+import           Effectful
+import           Effectful.Error.Static
 import           GHC.Exts                     (IsList (..))
 import           System.FilePath.Posix        (takeFileName)
 import           UnliftIO                     (mapConcurrently, mapConcurrently_)
@@ -94,7 +94,7 @@ instance Show ETooBig where
 
 instance Exception ETooBig
 
-createMultipart :: ([S3Op, OptFX, FSFX, DBFX, Error ETooBig] :>> es) => PostUploadHook -> FilePath -> ObjectKey -> Eff es PartialUpload
+createMultipart :: (S3Op :> es, OptFX :> es, FSFX :> es, DBFX :> es, Error ETooBig :> es) => PostUploadHook -> FilePath -> ObjectKey -> Eff es PartialUpload
 createMultipart hook fp key = do
   fsize <- fileSize fp
   b <- optBucket <$> getOptionsFX
@@ -110,7 +110,7 @@ completeStr PartialUpload{..} = show perc <> "% of around " <> show mb <> " MB c
         perc = 100 * length todo `div` length _pu_parts
         mb = fromIntegral _pu_chunkSize * length _pu_parts `div` (1024*1024)
 
-completeUpload ::  [S3Op, OptFX, FSFX, DBFX, LogFX, IOE] :>> es => PartialUpload -> Eff es ()
+completeUpload :: (S3Op :> es, OptFX :> es, FSFX :> es, DBFX :> es, LogFX :> es, IOE :> es) => PartialUpload -> Eff es ()
 completeUpload pu@PartialUpload{..} = do
   c <- optConcurrency <$> getOptionsFX
   logInfoL ["Uploading remaining parts of ", tshow _pu_filename, " to ", tshow _pu_bucket, ":", tshow _pu_key,
@@ -145,5 +145,5 @@ listMultiparts b = fmap resolve <$> listMultipartUploads b
 allBuckets :: S3Op :> es => Eff es [BucketName]
 allBuckets = listBuckets
 
-abortUpload :: ([DBFX, S3Op] :>> es) => BucketName -> ObjectKey -> S3UploadID -> Eff es ()
+abortUpload :: (DBFX :> es, S3Op :> es) => BucketName -> ObjectKey -> S3UploadID -> Eff es ()
 abortUpload b k u = abortMultipartUpload b k u *> abortedUpload u

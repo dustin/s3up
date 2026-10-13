@@ -12,13 +12,14 @@
 
 module DBSpec where
 
-import           Cleff
-import           Cleff.Fail
+import           Control.Monad          ((<=<))
 import           Data.Foldable          (traverse_)
 import           Data.List              (sort)
 import           Data.Maybe             (listToMaybe)
 import           Data.String
 import           Database.SQLite.Simple
+import           Effectful
+import           Effectful.Fail
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -39,9 +40,9 @@ instance Arbitrary PartialUpload where
                 <*> arbitraryBoundedEnum
                 <*> (zip [0..] <$> listOf (Just . fromString . getASCIIString <$> arbitrary `suchThat` (not . null . getASCIIString)))
 
-runDB :: forall a. (forall es. [DBFX, Fail, IOE] :>> es => Eff es a) -> IO a
+runDB :: forall a. (forall es. (DBFX :> es, Fail :> es, IOE :> es) => Eff es a) -> IO a
 runDB a = withConnection ":memory:" $ \db ->
-  runIOE . runFailIO . runDBFX db $ do
+  either fail pure <=< runEff . runFail . runDBFX db $ do
     initTables
     initTables
     a

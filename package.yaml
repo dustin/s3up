@@ -48,7 +48,8 @@ dependencies:
 - retry
 - unliftio-core
 - network
-- cleff
+- effectful-core
+- effectful-th
 
 library:
   source-dirs: src
