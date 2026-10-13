@@ -11,15 +11,16 @@
 
 module S3Up.Logging where
 
-import           Cleff
-import           Control.Monad         (when)
-import           Control.Monad.Logger  (Loc (..), LogLevel (..), LogSource, LogStr, defaultLoc, fromLogStr)
-import qualified Data.ByteString.Char8 as C8
-import           Data.Foldable         (fold)
-import           Data.String           (fromString)
-import qualified Data.Text             as T
+import           Control.Monad              (when)
+import           Control.Monad.Logger       (Loc (..), LogLevel (..), LogSource, LogStr, defaultLoc, fromLogStr)
+import qualified Data.ByteString.Char8      as C8
+import           Data.Foldable              (fold)
+import           Data.String                (fromString)
+import qualified Data.Text                  as T
+import           Effectful
+import           Effectful.Dispatch.Dynamic (interpret)
 import           S3Up.Effects
-import           System.IO             (stderr)
+import           System.IO                  (stderr)
 
 genericLog :: LogLevel -> LogFX :> es => T.Text -> Eff es ()
 genericLog lvl = logFX defaultLoc "" lvl . fromString . T.unpack
@@ -50,7 +51,7 @@ baseLogger minLvl _ _ lvl s = when (lvl >= minLvl) $ C8.hPutStrLn stderr (fromLo
                LevelOther x -> fromString . T.unpack $ x
 
 runLogFX :: (IOE :> es) => Bool -> Eff (LogFX : es) a -> Eff es a
-runLogFX verbose = interpretIO \case
+runLogFX verbose = interpret \_ -> \case
   LogFX loc src lvl' msg -> liftIO $ baseLogger minLvl loc src lvl' msg
   where minLvl = if verbose then LevelDebug else LevelInfo
 

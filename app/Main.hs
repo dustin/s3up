@@ -20,8 +20,6 @@ import           Amazonka.Auth                        (discover)
 import           Amazonka.Data.Text                   (ToText (..))
 import           Amazonka.S3                          (ObjectKey, StorageClass (..))
 import qualified Amazonka.S3                          as S3
-import           Cleff                                hiding (send)
-import           Cleff.Error
 import           Control.Applicative                  ((<|>))
 import           Control.Lens                         hiding (List, argument)
 import           Control.Monad                        (unless, void, when)
@@ -37,6 +35,9 @@ import           Data.Maybe                           (isNothing)
 import qualified Data.Set                             as Set
 import qualified Data.Text                            as T
 import           Database.SQLite.Simple               (Connection, withConnection)
+import           Effectful
+import           Effectful.Dispatch.Dynamic           (interpret)
+import           Effectful.Error.Static
 import           Options.Applicative                  (Parser, ReadM, argument, auto, command, customExecParser,
                                                        eitherReader, fullDesc, help, helper, info, long, metavar,
                                                        option, prefs, progDesc, readerError, short, showDefault,
@@ -114,15 +115,15 @@ options confdir = Options
 some1 :: Parser a -> Parser (NonEmpty a)
 some1 p = NE.fromList <$> some p
 
-type S3Up es = ([IOE, S3Op, OptFX, FSFX, DBFX, LogFX, Error ETooBig] :>> es)
+type S3Up es = (IOE :> es, S3Op :> es, OptFX :> es, FSFX :> es, DBFX :> es, LogFX :> es, Error ETooBig :> es)
 
 runS3FXIO :: IOE :> es => Eff (S3FX : es) a -> Eff es a
-runS3FXIO = interpretIO \case
+runS3FXIO = interpret \_ -> liftIO . \case
   InAWSFX a         -> newEnv discover >>= runResourceT . a
   InAWSRegionFX r a -> (newEnv discover <&> set #region r) >>= runResourceT . a
 
 runS3Op :: S3FX :> es => Options -> Eff (S3Op : es) a -> Eff es a
-runS3Op Options{..} = interpret \case
+runS3Op Options{..} = interpret \_ -> \case
   ListBuckets -> toListOf (#buckets . folded . folded . #name) <$> inAWS (`send` S3.newListBuckets)
   ListMultipartUploads b -> toListOf (#uploads . folded . folded) <$> (inAWSBucket b . flip send) (S3.newListMultipartUploads b)
   CreateMultipartUpload k -> view #uploadId <$> inAWSBucket optBucket (flip send $ S3.newCreateMultipartUpload optBucket k & #storageClass ?~ optClass)
@@ -131,17 +132,18 @@ runS3Op Options{..} = interpret \case
   AbortMultipartUpload b k u -> void <$> inAWSBucket b $ flip send $ S3.newAbortMultipartUpload optBucket k u
 
 runOptFX :: IOE :> es => Options -> Eff (OptFX : es) a -> Eff es a
-runOptFX o = interpret \case
+runOptFX o = interpret \_ -> \case
   GetOptionsFX -> pure o
 
 runFSFX :: IOE :> es => Eff (FSFX : es) a -> Eff es a
-runFSFX = interpretIO \case
-  FileSize fp          -> toInteger . Posix.fileSize <$> (liftIO . Posix.getFileStatus) fp
-  RemoveFile fp        -> liftIO (Dir.removeFile fp)
+runFSFX = interpret \_ -> liftIO . \case
+  FileSize fp          -> toInteger . Posix.fileSize <$> Posix.getFileStatus fp
+  RemoveFile fp        -> Dir.removeFile fp
   FileChunk fp off len -> BL.take (fromIntegral len) <$> BL.drop (fromIntegral off) <$> BL.readFile fp
 
 runFX :: (IOE :> es, Show err) => Connection -> Options -> Eff (LogFX : S3Op : S3FX : OptFX : FSFX : DBFX : Error err : es) a -> Eff es (Either err a)
-runFX db o@Options{..} = runError . runDBFX db . runFSFX . runOptFX o . runS3FXIO . runS3Op o . runLogFX optVerbose
+-- Concurrent unlifting lets mapConcurrently run Eff actions in other threads.
+runFX db o@Options{..} = withUnliftStrategy (ConcUnlift Ephemeral Unlimited) . runErrorNoCallStack . runDBFX db . runFSFX . runOptFX o . runS3FXIO . runS3Op o . runLogFX optVerbose
 
 runCreate :: S3Up es => Either String (NonEmpty (FilePath, ObjectKey)) -> Eff es ()
 runCreate (Left e) = logErrorL ["Invalid paths for create: ", T.pack e]
@@ -239,7 +241,7 @@ main = do
   createDirectoryIfMissing True confdir
   o@Options{..} <- customExecParser (prefs showHelpOnError) (opts confdir)
   withConnection optDBPath $ \db ->
-    runIOE (runFX db o (initTables *> run optCommand)) >>= \case
+    runEff (runFX db o (initTables *> run optCommand)) >>= \case
       Left e  -> putStrLn ("Error: " <> show @ETooBig e)
       Right _ -> pure ()
 

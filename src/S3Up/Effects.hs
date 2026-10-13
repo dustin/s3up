@@ -8,9 +8,11 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedLabels           #-}
 {-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
@@ -21,10 +23,11 @@ import qualified Amazonka                          as AWS
 import           Amazonka.S3.Types                 (BucketName (..), CompletedMultipartUpload (..), ETag (..),
                                                     ObjectKey (..))
 import           Amazonka.S3.Types.MultipartUpload (MultipartUpload)
-import           Cleff
 import           Control.Monad.Logger              (Loc (..), LogLevel (..), LogSource, LogStr)
 import           Control.Monad.Trans.Resource      (ResourceT)
 import qualified Data.ByteString.Lazy              as BL
+import           Effectful
+import           Effectful.TH
 import           S3Up.Types
 
 data OptFX :: Effect where

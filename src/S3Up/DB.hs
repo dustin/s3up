@@ -15,7 +15,6 @@ module S3Up.DB (runDBFX) where
 import           Amazonka.Data.ByteString         (ToByteString (..))
 import           Amazonka.Data.Text               (FromText, ToText (..), fromText)
 import           Amazonka.S3.Types                (BucketName (..), ETag (..), ObjectKey (..))
-import           Cleff
 import qualified Data.ByteString                  as BS
 import           Data.List                        (sortOn)
 import qualified Data.Map.Strict                  as Map
@@ -27,13 +26,15 @@ import           Database.SQLite.Simple           hiding (bind, close)
 import           Database.SQLite.Simple.FromField
 import           Database.SQLite.Simple.Ok
 import           Database.SQLite.Simple.ToField
+import           Effectful
+import           Effectful.Dispatch.Dynamic       (interpret)
 import           Text.Read                        (readMaybe)
 
 import           S3Up.Effects                     (DBFX (..))
 import           S3Up.Types
 
 runDBFX :: IOE :> es => Connection -> Eff (DBFX : es) a -> Eff es a
-runDBFX db = interpretIO \case
+runDBFX db = interpret \_ -> liftIO . \case
   InitTables                -> initTables db
   StoreUpload pu            -> storeUpload db pu
   CompletedUpload i         -> completedUpload db i

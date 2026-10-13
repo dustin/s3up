@@ -1,10 +1,10 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.35.2.
+-- This file has been generated from package.yaml by hpack version 0.38.3.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: fbe23262e327a418f1f8019308071fc398bb41aa364df08ecd03dcdba02947b6
+-- hash: 21342751096a8bfc20a88dd5cbe20966b869d74fea7d1d88a27ee8c5b7669456
 
 name:           s3up
 version:        0.1.0.0
@@ -48,11 +48,12 @@ library
     , async
     , base
     , bytestring
-    , cleff
     , conduit
     , conduit-extra
     , containers
     , directory
+    , effectful-core
+    , effectful-th
     , exceptions
     , extra
     , filepath
@@ -90,11 +91,12 @@ executable s3up
     , async
     , base
     , bytestring
-    , cleff
     , conduit
     , conduit-extra
     , containers
     , directory
+    , effectful-core
+    , effectful-th
     , exceptions
     , extra
     , filepath
@@ -138,11 +140,12 @@ test-suite s3up-test
     , async
     , base
     , bytestring
-    , cleff
     , conduit
     , conduit-extra
     , containers
     , directory
+    , effectful-core
+    , effectful-th
     , exceptions
     , extra
     , filepath
