@@ -29,6 +29,7 @@ jobs:
 
     - name: Build & Test
       run: |
+        nix develop --command cabal build all
         nix develop --command cabal test --test-show-details=streaming
         mkdir dist
         cp $(nix develop --command cabal list-bin exe:s3up) dist
